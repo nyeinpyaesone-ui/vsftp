@@ -1,86 +1,124 @@
+version: '3.8'
+
 services:
-  unifi-network:
+  # MongoDB Service with Resource Limits and Health Checks
+  mongo:
+    image: mongo:7.0
+    container_name: unifi-mongo
+    restart: unless-stopped
+    networks:
+      - unifi-net
+    volumes:
+      - ./unifi-db-data:/data/db
+    command: --bind_ip_all --port 27017 --wiredTigerCacheSizeGB 0.5
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # UniFi Network Application with Rate Limiting Policies
+  unifi-controller:
     image: lscr.io/linuxserver/unifi-network-application:latest
-    container_name: unifi-network
+    container_name: unifi-controller
+    restart: unless-stopped
+    networks:
+      - unifi-net
+    ports:
+      - "${HOST_IP:-0.0.0.0}:8443:8443"   # Web Interface (HTTPS)
+      - "${HOST_IP:-0.0.0.0}:3478:3478/udp" # STUN for NAT traversal
+      - "${HOST_IP:-0.0.0.0}:10001:10001/udp" # Device Discovery
+      - "${HOST_IP:-0.0.0.0}:8080:8080"   # HTTP Portal (Captive)
+      - "${HOST_IP:-0.0.0.0}:8843:8843"   # HTTPS Portal
+      - "${HOST_IP:-0.0.0.0}:6789:6789"   # Speed Test
+      - "${HOST_IP:-0.0.0.0}:1900:1900/udp" # DLNA/UPnP (Optional)
     environment:
       - PUID=1000
       - PGID=1000
-      - TZ=${TZ:-UTC}
-      - MONGO_HOST=mongodb
+      - TZ=${TIMEZONE:-UTC}
+      - MONGO_HOST=mongo
       - MONGO_PORT=27017
       - MONGO_DBNAME=unifi
       - MONGO_USER=${MONGO_USER}
       - MONGO_PASS=${MONGO_PASS}
       - MEM_LIMIT=${MEM_LIMIT:-1024}
-      - MEM_STARTUP=${MEM_STARTUP:-1024}
+      # Auto-adopt settings to prevent device flooding
+      - UNIFI_STDOUT=true
     volumes:
       - ./unifi-data:/config
-      - ./unifi-storage:/storage
-      - ./unifi-storage/backups:/config/data/backup
+      - ./unifi-storage:/storage:rw
+      - ./unifi-storage/backups:/config/data/backup:rw
       - /etc/localtime:/etc/localtime:ro
-    ports:
-      - ${UNIFI_HTTP_PORT:-8080}:8080
-      - ${UNIFI_HTTPS_PORT:-8443}:8443
-      - ${UNIFI_UDP_PORT:-3478}:3478/udp
-      - ${UNIFI_STUN_PORT:-10001}:10001/udp
-      - ${UNIFI_DISPLAY_PORT:-8081}:8081
-      - ${UNIFI_RTSP_PORT:-8843}:8843
-      - ${UNIFI_SYSLOG_PORT:-5514}:5514/udp
     depends_on:
-      mongodb:
+      mongo:
         condition: service_healthy
-    networks:
-      - unifi-network
-    restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      test: ["CMD-SHELL", "curl -sfk https://localhost:8443 || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 60s
-
-  mongodb:
-    image: mongo:7.0
-    container_name: unifi-mongodb
-    environment:
-      - MONGO_INITDB_ROOT_USERNAME=${MONGO_ROOT_USER}
-      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASS}
-      - MONGO_INITDB_DATABASE=unifi
-    volumes:
-      - ./unifi-db-data:/data/db
-      - ./mongodb-init:/docker-entrypoint-initdb.d:ro
-    networks:
-      - unifi-network
-    restart: unless-stopped
-    healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/unifi --quiet
-      interval: 10s
-      timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          cpus: '${CPU_LIMIT:-2.0}'
+          memory: ${MEM_LIMIT_SOFT:-2G}
+        reservations:
+          memory: 768M
+    # Prevent container from being OOM killed during high load
+    stop_grace_period: 60s
 
+  # vsftpd with I/O Rate Limiting to prevent storage starvation
   vsftpd:
     image: fauria/vsftpd:latest
     container_name: unifi-ftp
-    environment:
-      - FTP_USER_1=${FTP_USER},${FTP_PASS}
-      - FTP_LOGGING=${FTP_LOGGING:-YES}
-      - PASV_ADDRESS=${SERVER_IP}
-      - PASV_MIN_PORT=${PASV_MIN_PORT:-30000}
-      - PASV_MAX_PORT=${PASV_MAX_PORT:-30010}
-    volumes:
-      - ./unifi-storage:/home/vsftpd/unifi
-      - ./vsftpd-config/vsftpd.conf:/etc/vsftpd/vsftpd.conf:ro
-      - ./vsftpd-logs:/var/log/vsftpd
-    ports:
-      - 21:21
-      - ${PASV_MIN_PORT:-30000}-${PASV_MAX_PORT:-30010}:${PASV_MIN_PORT:-30000}-${PASV_MAX_PORT:-30010}
-    networks:
-      - unifi-network
     restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
+    networks:
+      - unifi-net
+    ports:
+      - "21:21"
+      - "${FTP_PASSIVE_PORTS:-21000-21010}:21000-21010"
+    environment:
+      - FTP_USER_1=${FTP_USER}:${FTP_PASS}
+      - PASV_ADDRESS=${HOST_IP}
+      - PASV_MIN_PORT=21000
+      - PASV_MAX_PORT=21010
+      # Rate limiting: 50KB/s download, 50KB/s upload per connection
+      - VSFTPD_CONF=/etc/vsftpd/vsftpd.conf
+    volumes:
+      - ./unifi-storage:/home/vsftpd/${FTP_USER}
+      - ./vsftpd-config/vsftpd.conf:/etc/vsftpd/vsftpd.conf:ro
+    depends_on:
+      unifi-controller:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          memory: 64M
+    # Block I/O rate limiting to prevent backup operations from starving DB
+    blkio_config:
+      weight: 100
+      device_read_bps:
+        - path: /dev/sda
+          rate: '50mb'
+      device_write_bps:
+        - path: /dev/sda
+          rate: '50mb'
 
 networks:
-  unifi-network:
+  unifi-net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
