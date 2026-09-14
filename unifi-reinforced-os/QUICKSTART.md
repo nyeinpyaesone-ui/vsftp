@@ -1,109 +1,87 @@
 # UniFi Network OS - Quick Start Guide
 
-## 🚀 60-Second Deployment
+## 🚀 One-Command Deployment
 
 ```bash
 cd /workspace/unifi-reinforced-os
 sudo ./scripts/setup.sh
 ```
 
-That's it! The script handles everything automatically.
-
----
-
 ## 📋 What Gets Deployed
 
-| Component | Purpose | Port(s) |
-|-----------|---------|---------|
-| **Nginx Proxy** | Frontend reverse proxy with HTTP/2, SSL, Gzip | 80, 443, 8443, 8080 |
-| **UniFi Controller** | Network management backend (JVM optimized) | Internal |
-| **MongoDB** | Database with WiredTiger optimization | Internal (27017) |
-| **vsftpd** | FTP storage with rate limiting (50KB/s) | 21, 30000-30010 |
-| **RL Orchestrator** | Q-Learning agent for auto-optimization | Internal |
+| Service | Container Name | Purpose | Resources |
+|---------|---------------|---------|-----------|
+| **Frontend** | `unifi-frontend` | Nginx reverse proxy (HTTP/2, SSL) | 0.5 CPU, 256MB RAM |
+| **Backend** | `unifi-backend` | UniFi Network Controller | 2.0 CPU, 2GB RAM |
+| **Database** | `unifi-database` | MongoDB with WiredTiger | 1.5 CPU, 1GB RAM |
+| **Storage** | `unifi-storage` | vsftpd server (rate-limited) | 0.5 CPU, 256MB RAM |
+| **Orchestrator** | `unifi-orchestrator` | Q-Learning RL agent | 0.5 CPU, 512MB RAM |
 
----
+**Total**: 5.0 CPU cores, 3.75GB RAM
 
 ## 🔑 Access Information
 
-After setup completes, you'll see:
+After setup completes, save these credentials from the `.env` file:
 
-```
-===============================================================================
-IMPORTANT: Save these credentials securely!
-===============================================================================
-MONGO_ROOT_USER: root_unifi_xxxx
-MONGO_ROOT_PASS: <32-char-random-password>
-MONGO_USER: unifi_app_xxxx
-MONGO_PASS: <32-char-random-password>
-FTP_USER: unifi_storage
-FTP_PASS: <24-char-random-password>
-===============================================================================
+```bash
+cat /workspace/unifi-reinforced-os/.env | grep -E "PASS|USER"
 ```
 
 ### Web Interfaces
 
-- **UniFi Controller**: `https://<your-server-ip>:8443`
-  - Complete the setup wizard on first login
-  - Adopt your UniFi devices
+| Service | URL | Notes |
+|---------|-----|-------|
+| UniFi Controller | `https://<server-ip>:8443` | Main management UI |
+| Device Gateway | `http://<server-ip>:8080` | Device communication |
+| FTP Storage | `ftp://<server-ip>:21` | Backup access |
 
-- **FTP Storage**: `ftp://<your-server-ip>:21`
-  - Username: `unifi_storage`
-  - Password: (from .env file)
+### Default Credentials
 
----
+- **FTP User**: `unifi_storage`
+- **FTP Password**: (shown in setup output, stored in `.env`)
+- **MongoDB Root**: Auto-generated (see `.env`)
+- **MongoDB App User**: Auto-generated (see `.env`)
 
-## 📊 Auto-Dynamic Features
-
-### Resource Allocation (Automatic)
-
-The setup script detects your hardware and allocates:
+## 📁 Directory Structure
 
 ```
-Detected: 4 CPUs, 8GB RAM, 50GB disk
-
-→ UniFi Controller:  2.0 CPU, 4096MB RAM (50% of total)
-→ MongoDB:           1.5 CPU, 1024MB RAM (25% cache)
-→ Nginx:             0.5 CPU, 256MB RAM
-→ vsftpd:            0.5 CPU, 256MB RAM
-→ RL Orchestrator:   0.5 CPU, 512MB RAM
+/workspace/unifi-reinforced-os/
+├── docker-compose.yml          # Service orchestration
+├── scripts/
+│   ├── setup.sh               # Auto-dynamic deployment
+│   └── backup.sh              # Automated backups
+├── configs/
+│   ├── nginx/nginx.conf       # HTTP/2, SSL, Gzip
+│   ├── mongo/mongod.conf      # WiredTiger optimization
+│   └── vsftpd/vsftpd.conf     # Rate limiting config
+├── orchestrator/
+│   ├── Dockerfile             # RL agent container
+│   └── rl_agent.py            # Q-Learning implementation
+├── data/
+│   ├── unifi/                 # UniFi configuration
+│   ├── mongo/                 # Database files
+│   ├── shared-storage/        # FTP accessible backups
+│   └── backups/               # Local backup archives
+└── logs/                      # Service logs
 ```
 
-### Network Optimization (Automatic)
-
-```bash
-✅ TCP BBR congestion control enabled
-✅ HTTP/2 multiplexing active
-✅ Gzip compression (level 6)
-✅ Connection pooling (32 keepalive)
-✅ Rate limiting: 10 req/s (burst 20)
-```
-
-### Reinforcement Learning (Continuous)
-
-The RL agent monitors every 30 seconds:
-- CPU usage → State: `normal`/`high_cpu`
-- Memory usage → State: `normal`/`high_memory`
-- Takes actions: `scale_up`, `scale_down`, `optimize_network`, `optimize_db`
-- Learns optimal configuration through rewards
-
----
-
-## 🛠️ Common Commands
-
-### View Status
-```bash
-docker compose ps
-docker stats
-```
+## 🔧 Common Operations
 
 ### View Logs
 ```bash
-# All services
-docker compose logs -f
+docker compose logs -f unifi-backend      # UniFi Controller
+docker compose logs -f unifi-database     # MongoDB
+docker compose logs -f unifi-orchestrator # RL Agent
+```
 
-# Specific service
-docker compose logs -f unifi-backend
-docker compose logs -f unifi-orchestrator
+### Monitor Resources
+```bash
+docker stats unifi-backend unifi-database
+```
+
+### Create Manual Backup
+```bash
+./scripts/backup.sh
 ```
 
 ### Restart Services
@@ -111,166 +89,105 @@ docker compose logs -f unifi-orchestrator
 docker compose restart
 ```
 
-### Stop Everything
+### Stop All Services
 ```bash
 docker compose down
 ```
 
-### Update Images
+### Complete Reset
 ```bash
-docker compose pull
+docker compose down -v
+rm -rf data/* .env
+sudo ./scripts/setup.sh
+```
+
+## 🎯 Reinforcement Learning Features
+
+The RL Orchestrator automatically:
+- Monitors CPU/Memory usage every 30 seconds
+- Learns optimal resource allocation via Q-Learning
+- Adjusts configurations based on reward signals
+- Logs decisions to `/workspace/unifi-reinforced-os/logs/orchestrator/`
+
+### View RL Decisions
+```bash
+docker exec unifi-orchestrator tail -f /app/logs/orchestrator.log
+```
+
+## ⚙️ Configuration Tuning
+
+### Adjust Resource Limits
+Edit `docker-compose.yml`:
+```yaml
+deploy:
+  resources:
+    limits:
+      cpus: '2.0'    # Change this
+      memory: 4096M  # Change this
+```
+
+Then restart:
+```bash
 docker compose up -d --force-recreate
 ```
 
----
-
-## 📁 Directory Structure
-
-```
-/workspace/unifi-reinforced-os/
-├── docker-compose.yml       # Service definitions
-├── .env                     # Auto-generated credentials
-├── README.md                # Full documentation
-├── QUICKSTART.md            # This file
-├── scripts/
-│   └── setup.sh            # Main deployment script
-├── configs/
-│   ├── nginx/nginx.conf    # Reverse proxy config
-│   ├── nginx/ssl/          # SSL certificates
-│   ├── mongo/mongod.conf   # Database config
-│   └── vsftpd/vsftpd.conf  # FTP config
-├── data/
-│   ├── unifi/              # UniFi application data
-│   ├── mongo/              # MongoDB database files
-│   ├── shared-storage/     # Shared with FTP
-│   └── backups/            # Backup archives
-├── logs/
-│   ├── nginx/              # Web server logs
-│   └── orchestrator/       # RL agent logs
-└── orchestrator/
-    ├── Dockerfile          # RL agent container
-    └── rl_agent.py         # Q-Learning implementation
-```
-
----
-
-## 🔧 Customization
-
-### Change Resource Limits
-
-Edit `.env` before running setup:
+### Modify FTP Rate Limit
+Edit `.env`:
 ```bash
-UNIFI_MEM_LIMIT=4096      # Increase UniFi RAM
-MONGO_CACHE_SIZE=1.0      # Increase MongoDB cache
-FTP_RATE_LIMIT=102400     # Double FTP speed (100KB/s)
+FTP_RATE_LIMIT=102400  # 100 KB/s
 ```
 
-### Disable RL Agent
-
-Comment out in `docker-compose.yml`:
-```yaml
-# unifi-orchestrator:
-#   build: ...
+Restart FTP service:
+```bash
+docker compose restart unifi-storage
 ```
-
-### Use Different Network Ports
-
-Edit `docker-compose.yml` ports section:
-```yaml
-ports:
-  - "9443:8443"  # Change HTTPS port
-```
-
----
 
 ## 🐛 Troubleshooting
 
-### Setup Fails at Port Check
+### Check Service Status
 ```bash
-# Find what's using the port
-sudo ss -tuln | grep :8443
-
-# Stop conflicting service or change port in docker-compose.yml
+docker compose ps
 ```
 
-### UniFi Won't Start
+### Port Conflicts
 ```bash
-# Check logs
-docker compose logs unifi-backend
-
-# Verify Java is running
-docker exec unifi-backend pgrep -x java
-
-# Restart
-docker compose restart unifi-backend
+sudo ss -tuln | grep -E ':(80|443|8443|8080|21|27017)'
 ```
 
-### Can't Access Web Interface
+### Insufficient Resources
 ```bash
-# Check firewall
-sudo ufw status
-
-# Allow ports
-sudo ufw allow 8443/tcp
-sudo ufw allow 8080/tcp
+free -h    # Check RAM
+df -h      # Check disk
+nproc      # Check CPU cores
 ```
 
-### RL Agent Errors
+### View All Logs
 ```bash
-# Check Docker socket access
-docker exec unifi-orchestrator ls -la /var/run/docker.sock
-
-# Restart agent
-docker compose restart unifi-orchestrator
+docker compose logs --tail=100
 ```
+
+## 📊 Hardware Requirements
+
+| Minimum | Recommended | Enterprise |
+|---------|-------------|------------|
+| 2 CPU cores | 4 CPU cores | 8+ CPU cores |
+| 2GB RAM | 4-8GB RAM | 16GB+ RAM |
+| 20GB SSD | 50GB SSD | 100GB+ NVMe |
+| < 50 devices | 50-200 devices | 200+ devices |
+
+## 🔒 Security Notes
+
+1. **Save Credentials**: The `.env` file contains auto-generated passwords
+2. **Firewall**: Only expose ports 80, 443, 8443, 8080, 21
+3. **SSL Certificates**: Replace self-signed certs for production
+4. **Permissions**: Data directories are set to 700 (owner only)
+
+## 📞 Support
+
+- **UniFi Issues**: [community.ui.com](https://community.ui.com)
+- **Docker Issues**: Check `docker compose logs`
+- **RL Agent**: View orchestrator logs
 
 ---
 
-## 📈 Monitoring
-
-### Real-Time Metrics
-```bash
-docker stats --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}"
-```
-
-### RL Agent Performance
-```bash
-# Watch Q-Learning decisions
-docker logs unifi-orchestrator -f | grep "Action:"
-
-# View learned Q-Table
-docker exec unifi-orchestrator cat /app/logs/orchestrator.log | grep "Q-Table" | tail -1
-```
-
-### Database Performance
-```bash
-docker exec unifi-database mongosh --eval "db.serverStatus().metrics"
-```
-
----
-
-## 🔐 Security Best Practices
-
-1. **Save Credentials**: Copy `.env` to secure location
-2. **Firewall**: Only expose required ports
-3. **SSL**: Replace self-signed cert with Let's Encrypt:
-   ```bash
-   sudo certbot certonly --standalone -d your-domain.com
-   ```
-4. **Regular Updates**: Run monthly:
-   ```bash
-   docker compose pull && docker compose up -d
-   ```
-5. **Backups**: Weekly automated backups to FTP storage
-
----
-
-## 📞 Need Help?
-
-- **UniFi Issues**: [Ubiquiti Community](https://community.ui.com)
-- **Docker Issues**: `docker compose logs <service>`
-- **RL Agent**: Check `/workspace/unifi-reinforced-os/logs/orchestrator/`
-
----
-
-**Enjoy your self-optimizing UniFi Network OS!** 🎉
+**Next Steps**: After accessing `https://<server-ip>:8443`, complete the UniFi setup wizard to configure your network.
