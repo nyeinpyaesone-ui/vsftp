@@ -5,3 +5,4 @@ The deleted files are all source/config files (.md, .yml, .sh) and there are no 
 dist/
 build/
 *.log
+node_modules/
