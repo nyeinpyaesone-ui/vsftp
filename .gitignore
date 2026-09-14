@@ -1,5 +1,8 @@
-node_modules/
+```
+.vscode/
+*.log
+*.tmp
+```node_modules/
 .next/
 dist/
 build/
-*.log

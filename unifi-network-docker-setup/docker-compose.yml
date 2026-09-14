@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  unifi-network:
+    image: lscr.io/linuxserver/unifi-network-application:latest
+    container_name: unifi-network-application
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - MEM_LIMIT=2048
+      - MEM_STARTUP=1024
+      - MONGO_HOST=unifi-db
+      - MONGO_PORT=27017
+      - MONGO_DBNAME=unifi
+      - MONGO_USER=unifi
+      - MONGO_PASS=unifi_password
+    volumes:
+      - ./unifi-data:/config
+      - ./unifi-storage:/storage
+    ports:
+      - 8080:8080
+      - 8443:8443
+      - 3478:3478/udp
+      - 10001:10001/udp
+      - 27117:27117
+    depends_on:
+      - unifi-db
+    restart: unless-stopped
+    networks:
+      - unifi-network
+
+  unifi-db:
+    image: mongo:6.0
+    container_name: unifi-db
+    environment:
+      - MONGO_INITDB_DATABASE=unifi
+      - MONGO_INITDB_ROOT_USERNAME=unifi
+      - MONGO_INITDB_ROOT_PASSWORD=unifi_password
+    volumes:
+      - ./unifi-db-data:/data/db
+    restart: unless-stopped
+    networks:
+      - unifi-network
+
+  vsftpd:
+    image: fauria/vsftpd
+    container_name: vsftpd-server
+    environment:
+      - FTP_USER=unifi
+      - FTP_PASS=unifi_ftp_password
+      - PASV_ADDRESS=YOUR_SERVER_IP_HERE
+      - PASV_MIN_PORT=30000
+      - PASV_MAX_PORT=30010
+    volumes:
+      - ./unifi-storage:/home/vsftpd/unifi
+      - ./vsftpd-config:/etc/vsftpd
+    ports:
+      - 21:21
+      - 30000-30010:30000-30010
+    restart: unless-stopped
+    networks:
+      - unifi-network
+
+networks:
+  unifi-network:
+    driver: bridge
