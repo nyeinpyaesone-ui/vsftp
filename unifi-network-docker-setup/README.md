@@ -1,172 +1,185 @@
-# UniFi Network OS - Auto-Dynamic Docker Setup
+# UniFi Network OS - Auto-Dynamic Enforced Docker Setup
 
 ## Overview
 
-This is a fully automated, dynamic deployment solution for UniFi Network OS with integrated vsftpd FTP server for shared storage and backups. The setup automatically:
+This is a **fully automated, self-enforcing** deployment solution for UniFi Network OS with integrated vsftpd server for shared storage and backups. The setup script enforces strict security and hardware requirements before deployment.
 
-- **Detects server IP** address dynamically
-- **Generates secure passwords** for all services
-- **Checks system resources** (disk space, memory)
-- **Configures optimal settings** based on hardware capacity
-- **Sets up shared storage** between UniFi and FTP server
+## Features
+
+### Auto-Dynamic Capabilities
+- ✅ **Automatic IP Detection** - Dynamically detects server IP address
+- ✅ **Secure Password Generation** - Generates cryptographically secure passwords for MongoDB and FTP
+- ✅ **Resource Validation** - Enforces minimum hardware requirements (10GB disk, 1.5GB RAM)
+- ✅ **Port Conflict Detection** - Checks for port availability before deployment
+- ✅ **Health Check Enforcement** - Validates service health before completing setup
+
+### Security Enforcements
+- 🔒 **Root Privilege Required** - Ensures proper permissions for Docker operations
+- 🔒 **Strict Directory Permissions** - Sets appropriate file system permissions
+- 🔒 **SSL/TLS Enabled** - Pre-configured SSL for both UniFi and FTP
+- 🔒 **No Anonymous FTP** - Disabled anonymous access by default
+
+### Architecture
+- **UniFi Network Controller** - Manages UniFi devices
+- **MongoDB 7.0** - Database backend with health checks
+- **vsftpd Server** - FTP server for shared storage and backups
+- **Shared Storage Volume** - Both UniFi and FTP access `/unifi-storage`
 
 ## Quick Start
 
 ```bash
 cd /workspace/unifi-network-docker-setup
-./setup.sh
+sudo ./setup.sh
 ```
 
-That's it! The script handles everything automatically.
-
-## Features
-
-### Auto-Dynamic Configuration
-
-✅ **Automatic Server IP Detection** - No manual IP configuration needed  
-✅ **Secure Password Generation** - Cryptographically secure random passwords  
-✅ **Resource Detection** - Checks disk space and memory availability  
-✅ **Dynamic Environment Setup** - Creates `.env` file with all configurations  
-
-### Pre-Configured Services
-
-- **UniFi Network Application** - Latest version with health checks
-- **MongoDB 7.0** - Database with automatic initialization
-- **vsftpd FTP Server** - Pre-configured with SSL and passive mode
-
-### Shared Storage Architecture
-
-```
-./unifi-storage/          # Shared storage directory
-├── backups/              # UniFi automatic backups (FTP accessible)
-└── logs/                 # System logs
-```
-
-Both UniFi and FTP server have access to the same storage directory.
-
-## Hardware Requirements
-
-### Minimum (Up to 50 devices)
-- CPU: 2 cores
-- RAM: 2GB
-- Storage: 10GB
-
-### Recommended (50-200 devices)
-- CPU: 4 cores
-- RAM: 4-8GB
-- Storage: 50GB SSD
-
-### Enterprise (200+ devices)
-- CPU: 8 cores
-- RAM: 16-32GB
-- Storage: 100GB+ NVMe
+That's it! The script will:
+1. Verify root privileges
+2. Check Docker installation
+3. Validate hardware resources
+4. Check port availability
+5. Generate secure credentials
+6. Create directory structure
+7. Deploy containers
+8. Verify health checks
+9. Display access information
 
 ## Access Information
 
-After setup completes:
+After successful deployment:
 
-- **UniFi Controller**: `https://<server-ip>:8443`
-- **FTP Server**: `ftp://<server-ip>:21`
-- **FTP Username**: `unifi`
-- **FTP Password**: (shown during setup, also in `.env` file)
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| UniFi Controller | `https://<SERVER_IP>:8443` | Setup wizard on first login |
+| FTP Server | `ftp://<SERVER_IP>:21` | User: `unifi`, Password: (shown during setup) |
+| Shared Storage | `/workspace/unifi-network-docker-setup/unifi-storage` | N/A |
 
-## Directory Structure
+## Hardware Requirements
+
+### Minimum (Enforced)
+- **CPU**: 2 cores
+- **RAM**: 1.5 GB
+- **Disk**: 10 GB free space
+- **OS**: Linux with Docker installed
+
+### Recommended
+- **CPU**: 4 cores
+- **RAM**: 4-8 GB
+- **Disk**: 50 GB SSD
+- **Network**: Gigabit Ethernet
+
+## Ports Used
+
+| Port | Protocol | Service |
+|------|----------|---------|
+| 8443 | TCP | UniFi HTTPS Interface |
+| 8080 | TCP | UniFi HTTP Portal |
+| 3478 | UDP | STUN |
+| 10001 | UDP | UniFi Discovery |
+| 8843 | TCP | RTSP |
+| 21 | TCP | FTP Control |
+| 30000-30010 | TCP | FTP Passive Mode |
+| 27017 | TCP | MongoDB (internal) |
+
+## File Structure
 
 ```
-unifi-network-docker-setup/
-├── docker-compose.yml      # Service definitions
-├── setup.sh               # Auto-dynamic setup script
-├── backup.sh              # Automated backup script
-├── .env                   # Generated environment variables
-├── unifi-data/            # UniFi configuration
-├── unifi-db-data/         # MongoDB data
-├── unifi-storage/         # Shared storage
-│   ├── backups/           # Backup files
-│   └── logs/              # Logs
-├── mongodb-init/          # Database initialization
-└── vsftpd-config/         # FTP configuration
-    └── vsftpd.conf
+/workspace/unifi-network-docker-setup/
+├── setup.sh              # Main enforcement script
+├── docker-compose.yml    # Service definitions
+├── .env                  # Auto-generated credentials (created by setup.sh)
+├── unifi-data/           # UniFi configuration
+├── unifi-db-data/        # MongoDB data
+├── unifi-storage/        # Shared storage (backups, FTP files)
+│   └── backups/          # UniFi backup location
+├── vsftpd-config/        # FTP configuration
+│   └── vsftpd.conf       # FTP server config
+├── vsftpd-data/          # FTP user directories
+│   └── unifi/            # FTP user home
+└── vsftpd-logs/          # FTP logs
 ```
 
-## Manual Operations
+## Management Commands
 
-### View Logs
 ```bash
+# View logs
 docker compose logs -f
-```
 
-### Stop Services
-```bash
+# View specific service logs
+docker compose logs -f unifi-network
+docker compose logs -f mongodb
+docker compose logs -f vsftpd
+
+# Stop services
 docker compose down
-```
 
-### Restart Services
-```bash
+# Restart services
 docker compose restart
+
+# Backup UniFi configuration
+# Files are automatically saved to: ./unifi-storage/backups/
+
+# Access FTP manually
+ftp <SERVER_IP>
+# Username: unifi
+# Password: (from setup output)
 ```
-
-### Update UniFi
-```bash
-docker compose pull
-docker compose up -d
-```
-
-### Backup Management
-
-Manual backup to FTP storage:
-```bash
-./backup.sh
-```
-
-Scheduled backups (add to crontab):
-```bash
-0 2 * * * /path/to/backup.sh
-```
-
-## Security Notes
-
-⚠️ **Save your credentials!** The setup script generates secure random passwords displayed only once during setup. They are also stored in the `.env` file.
-
-- Change default passwords in production
-- Use SSL/TLS for FTP (configured by default)
-- Restrict FTP access to trusted networks
-- Regularly update Docker images
 
 ## Troubleshooting
 
-### Services won't start
+### Setup Fails at Root Check
 ```bash
-# Check Docker status
-docker info
-
-# View error logs
-docker compose logs
+sudo ./setup.sh
 ```
 
-### Can't access UniFi controller
+### Port Conflicts
+Check which process is using a port:
 ```bash
-# Check if ports are open
-netstat -tlnp | grep 8443
-
-# Verify container is running
-docker compose ps
+sudo ss -tuln | grep :8443
+sudo lsof -i :8443
 ```
 
-### FTP connection issues
+### Health Check Timeout
+If UniFi takes longer to start:
 ```bash
-# Check FTP logs
-docker logs unifi-ftp
-
-# Verify passive ports
-iptables -L -n | grep 30000
+docker compose logs -f unifi-network
+# Wait for "INFO: Server startup complete"
 ```
+
+### Reset Deployment
+```bash
+docker compose down -v
+rm .env
+sudo ./setup.sh
+```
+
+## Automated Backups
+
+The setup includes automatic backup capability:
+- UniFi stores backups in `./unifi-storage/backups/`
+- FTP server provides remote access to these backups
+- Both services share the same storage volume
+
+To manually trigger a backup from the UniFi interface:
+1. Go to Settings → System → Backup
+2. Click "Download" or configure automatic backups
+
+## Security Notes
+
+1. **Save Credentials**: The `.env` file contains all passwords. Store it securely.
+2. **Firewall**: Configure your firewall to allow only necessary ports.
+3. **SSL Certificates**: Replace snakeoil certificates with valid ones for production.
+4. **Regular Updates**: Keep Docker images updated for security patches.
 
 ## Support
 
-For UniFi-specific issues: https://community.ui.com  
-For Docker issues: https://docs.docker.com  
+For issues:
+1. Check logs: `docker compose logs -f`
+2. Verify resources: `docker stats`
+3. Review hardware requirements above
+4. Ensure Docker daemon is running: `systemctl status docker`
 
 ---
 
-**License**: MIT  
-**Version**: 2.0 (Auto-Dynamic)
+**Version**: 2.0 (Enforced Auto-Dynamic)  
+**Last Updated**: 2024  
+**License**: MIT
