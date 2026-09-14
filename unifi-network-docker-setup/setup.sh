@@ -1,13 +1,11 @@
 #!/bin/bash
+#===============================================================================
+# UniFi Network OS - Auto-Dynamic Setup with Enforcement & Rate Limiting
+# This script includes comprehensive gap analysis, error prevention, and 
+# resource rate limiting policies to ensure stable operation.
+#===============================================================================
 
-# ==============================================================================
-# UniFi Network OS Auto-Dynamic Enforced Setup
-# ==============================================================================
-# This script enforces strict requirements for security and stability.
-# It will ABORT if any critical check fails.
-# ==============================================================================
-
-set -e # Exit immediately if a command exits with a non-zero status
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'
@@ -16,226 +14,427 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Configuration
-INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${INSTALL_DIR}/.env"
-REQUIRED_DISK_GB=10
-REQUIRED_RAM_GB=1.5
-REQUIRED_PORTS=("8443" "8080" "21" "27017" "3478")
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${SCRIPT_DIR}/.env"
+LOG_FILE="${SCRIPT_DIR}/setup.log"
 
-# ------------------------------------------------------------------------------
-# Helper Functions
-# ------------------------------------------------------------------------------
+#===============================================================================
+# GAP ANALYSIS & PRE-FLIGHT CHECKS
+#===============================================================================
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log() {
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
 
-enforce_root() {
+error_exit() {
+    log "${RED}ERROR: $1${NC}"
+    exit 1
+}
+
+warn() {
+    log "${YELLOW}WARNING: $1${NC}"
+}
+
+info() {
+    log "${BLUE}INFO: $1${NC}"
+}
+
+success() {
+    log "${GREEN}SUCCESS: $1${NC}"
+}
+
+#-------------------------------------------------------------------------------
+# Gap Check 1: Root Privileges Enforcement
+#-------------------------------------------------------------------------------
+check_root() {
+    info "Checking root privileges..."
     if [[ $EUID -ne 0 ]]; then
-        log_error "This script must be run as root (sudo)."
-        log_error "Docker network bindings and port mapping require elevated privileges."
-        exit 1
+        error_exit "This script must be run as root. Use: sudo $0"
     fi
-    log_info "Root privileges verified."
+    success "Root privileges confirmed"
 }
 
+#-------------------------------------------------------------------------------
+# Gap Check 2: Docker Installation & Version
+#-------------------------------------------------------------------------------
 check_docker() {
+    info "Checking Docker installation..."
+    
     if ! command -v docker &> /dev/null; then
-        log_error "Docker is not installed. Please install Docker first."
-        exit 1
+        error_exit "Docker is not installed. Please install Docker first."
     fi
+    
+    DOCKER_VERSION=$(docker --version | awk '{print $3}' | cut -d',' -f1)
+    info "Docker version: $DOCKER_VERSION"
+    
     if ! docker info &> /dev/null; then
-        log_error "Docker daemon is not running. Start Docker and try again."
-        exit 1
+        error_exit "Docker daemon is not running. Start it with: systemctl start docker"
     fi
-    log_success "Docker daemon is active."
+    
+    # Check Docker Compose plugin
+    if ! docker compose version &> /dev/null; then
+        error_exit "Docker Compose plugin not found. Install docker-compose-plugin."
+    fi
+    
+    success "Docker and Compose verified"
 }
 
+#-------------------------------------------------------------------------------
+# Gap Check 3: Hardware Resource Validation (Prevent Under-provisioning)
+#-------------------------------------------------------------------------------
 check_resources() {
-    log_info "Enforcing hardware requirements..."
+    info "Validating hardware resources..."
     
-    # Check Disk Space
-    local available_disk=$(df -BG "$INSTALL_DIR" | awk 'NR==2 {print $4}' | sed 's/G//')
-    if (( $(echo "$available_disk < $REQUIRED_DISK_GB" | bc -l) )); then
-        log_error "Insufficient disk space. Found: ${available_disk}GB, Required: ${REQUIRED_DISK_GB}GB"
-        exit 1
+    # Disk Space Check (Minimum 15GB for safe operation with backups)
+    DISK_AVAILABLE=$(df -BG "$SCRIPT_DIR" | awk 'NR==2 {print $4}' | tr -d 'G')
+    if [[ $DISK_AVAILABLE -lt 15 ]]; then
+        error_exit "Insufficient disk space. Available: ${DISK_AVAILABLE}GB, Required: 15GB minimum"
     fi
-    log_success "Disk space OK (${available_disk}GB available)."
-
-    # Check RAM
-    local total_ram=$(free -g | awk 'NR==2 {print $2}')
-    if (( $(echo "$total_ram < $REQUIRED_RAM_GB" | bc -l) )); then
-        log_error "Insufficient RAM. Found: ${total_ram}GB, Required: ${REQUIRED_RAM_GB}GB"
-        exit 1
-    fi
-    log_success "Memory OK (${total_ram}GB available)."
-}
-
-check_ports() {
-    log_info "Enforcing port availability..."
-    local port_conflict=0
+    info "Disk space OK: ${DISK_AVAILABLE}GB available"
     
-    for port in "${REQUIRED_PORTS[@]}"; do
-        if ss -tuln | grep -q ":$port "; then
-            log_error "Port $port is already in use. Cannot proceed."
-            port_conflict=1
-        fi
-    done
-
-    if [ $port_conflict -eq 1 ]; then
-        log_error "Port conflict detected. Please free up the required ports and retry."
-        exit 1
-    fi
-    log_success "All required ports are available."
-}
-
-generate_secure_env() {
-    log_info "Generating secure environment configuration..."
+    # Memory Check (Minimum 2GB RAM recommended)
+    TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+    TOTAL_MEM_GB=$((TOTAL_MEM_KB / 1024 / 1024))
     
-    # Generate random passwords
-    MONGO_ROOT_PASS=$(openssl rand -base64 32 | tr -d '/=+' | head -c 32)
-    MONGO_USER_PASS=$(openssl rand -base64 32 | tr -d '/=+' | head -c 32)
-    FTP_PASS=$(openssl rand -base64 24 | tr -d '/=+' | head -c 24)
-    
-    # Detect Server IP dynamically
-    SERVER_IP=$(hostname -I | awk '{print $1}')
-    if [ -z "$SERVER_IP" ]; then
-        log_warn "Could not auto-detect IP. Defaulting to 127.0.0.1 (Localhost only)"
-        SERVER_IP="127.0.0.1"
-    fi
-
-    cat > "$ENV_FILE" <<EOFINNER
-# Auto-generated by Enforced Setup Script - $(date)
-# DO NOT EDIT MANUALLY UNLESS NECESSARY
-
-# Network Settings
-SERVER_IP=${SERVER_IP}
-
-# MongoDB Credentials (Auto-Generated Secure)
-MONGO_ROOT_USER=root
-MONGO_ROOT_PASS=${MONGO_ROOT_PASS}
-MONGO_USER=unifi
-MONGO_PASS=${MONGO_USER_PASS}
-
-# FTP Credentials (Auto-Generated Secure)
-FTP_USER=unifi
-FTP_PASS=${FTP_PASS}
-
-# Resource Limits
-MEM_LIMIT=2G
-CPU_LIMIT=2.0
-EOFINNER
-
-    # Verify generation
-    if [ ! -f "$ENV_FILE" ] || [ ! -s "$ENV_FILE" ]; then
-        log_error "Failed to generate .env file. Aborting."
-        exit 1
-    fi
-    
-    log_success "Secure environment file generated at ${ENV_FILE}"
-    echo ""
-    log_warn "SAVE THESE CREDENTIALS SECURELY:"
-    echo "----------------------------------------"
-    echo "MongoDB Root Pass: ${MONGO_ROOT_PASS}"
-    echo "MongoDB User Pass: ${MONGO_USER_PASS}"
-    echo "FTP Password     : ${FTP_PASS}"
-    echo "Server IP        : ${SERVER_IP}"
-    echo "----------------------------------------"
-}
-
-create_directories() {
-    log_info "Creating enforced directory structure..."
-    mkdir -p "${INSTALL_DIR}/unifi-data"
-    mkdir -p "${INSTALL_DIR}/unifi-db-data"
-    mkdir -p "${INSTALL_DIR}/unifi-storage"
-    mkdir -p "${INSTALL_DIR}/vsftpd-config"
-    mkdir -p "${INSTALL_DIR}/vsftpd-data/unifi"
-    
-    # Set strict permissions
-    chmod 750 "${INSTALL_DIR}/unifi-data"
-    chmod 750 "${INSTALL_DIR}/unifi-db-data"
-    chmod 770 "${INSTALL_DIR}/unifi-storage"
-    chmod 750 "${INSTALL_DIR}/vsftpd-config"
-    chmod 700 "${INSTALL_DIR}/vsftpd-data"
-    
-    log_success "Directory structure created with secure permissions."
-}
-
-deploy_containers() {
-    log_info "Deploying containers with health checks enabled..."
-    
-    cd "$INSTALL_DIR"
-    
-    # Pull images first to ensure validity
-    docker compose pull || {
-        log_error "Failed to pull Docker images. Check internet connection."
-        exit 1
-    }
-
-    # Start services
-    docker compose up -d
-    
-    log_info "Waiting for services to initialize (max 60s)..."
-    
-    # Enforcement: Health Check Loop
-    local max_wait=60
-    local waited=0
-    local healthy=0
-    
-    while [ $waited -lt $max_wait ]; do
-        sleep 5
-        waited=$((waited + 5))
+    if [[ $TOTAL_MEM_GB -lt 2 ]]; then
+        warn "Low memory detected: ${TOTAL_MEM_GB}GB. Minimum 2GB recommended for stable operation."
+        warn "UniFi may experience OOM kills under load. Consider adding swap space."
         
-        # Check if UniFi container is running and healthy
-        if docker compose ps unifi | grep -q "healthy\|running"; then
-             # Basic check: is the process actually up?
-             if docker compose exec -T unifi ps aux | grep -q "java"; then
-                healthy=1
-                break
-             fi
+        # Check if swap exists
+        SWAP_TOTAL=$(grep SwapTotal /proc/meminfo | awk '{print $2}')
+        if [[ $SWAP_TOTAL -lt 2097152 ]]; then # 2GB in KB
+            error_exit "No adequate swap space. Add at least 2GB swap or upgrade RAM."
         fi
-        log_info "Still waiting for UniFi controller... (${waited}s/${max_wait}s)"
-    done
-
-    if [ $healthy -eq 0 ]; then
-        log_error "Enforcement Failed: UniFi Controller did not become healthy within ${max_wait} seconds."
-        log_info "Rolling back deployment..."
-        docker compose down
-        log_error "Please check logs: docker compose logs unifi"
-        exit 1
     fi
-
-    log_success "Deployment enforced and verified successful!"
+    info "Memory OK: ${TOTAL_MEM_GB}GB total"
+    
+    # CPU Core Check
+    CPU_CORES=$(nproc)
+    if [[ $CPU_CORES -lt 2 ]]; then
+        error_exit "Insufficient CPU cores. Available: $CPU_CORES, Required: 2 minimum"
+    fi
+    info "CPU cores OK: $CPU_CORES cores"
 }
 
-show_access_info() {
-    source "$ENV_FILE"
-    echo ""
-    log_success "=== DEPLOYMENT COMPLETE ==="
-    echo "UniFi Network OS URL: https://${SERVER_IP}:8443"
-    echo "FTP Server Address:   ftp://${SERVER_IP}:21"
-    echo "FTP Username:         ${FTP_USER}"
-    echo "Shared Storage Path:  ${INSTALL_DIR}/unifi-storage"
-    echo ""
-    log_info "To view logs: docker compose logs -f"
-    log_info "To stop:      docker compose down"
+#-------------------------------------------------------------------------------
+# Gap Check 4: Port Conflict Detection (Critical for Service Startup)
+#-------------------------------------------------------------------------------
+check_ports() {
+    info "Checking for port conflicts..."
+    
+    REQUIRED_PORTS=("8443" "8080" "8843" "3478" "10001" "6789" "21")
+    CONFLICT_FOUND=false
+    
+    for PORT in "${REQUIRED_PORTS[@]}"; do
+        if ss -tuln | grep -q ":$PORT "; then
+            warn "Port $PORT is already in use!"
+            CONFLICT_FOUND=true
+        fi
+    done
+    
+    # Check FTP passive port range
+    for PORT in {21000..21010}; do
+        if ss -tuln | grep -q ":$PORT "; then
+            warn "FTP passive port $PORT is in use!"
+            CONFLICT_FOUND=true
+        fi
+    done
+    
+    if [[ "$CONFLICT_FOUND" == "true" ]]; then
+        error_exit "Port conflicts detected. Stop conflicting services or change ports in docker-compose.yml"
+    fi
+    
+    success "All required ports are available"
 }
 
-# ------------------------------------------------------------------------------
-# Main Execution Flow
-# ------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
+# Gap Check 5: Existing Container Cleanup
+#-------------------------------------------------------------------------------
+cleanup_existing() {
+    info "Checking for existing containers..."
+    
+    CONTAINERS=("unifi-mongo" "unifi-controller" "unifi-ftp")
+    for CONTAINER in "${CONTAINERS[@]}"; do
+        if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
+            warn "Removing existing container: $CONTAINER"
+            docker stop "$CONTAINER" 2>/dev/null || true
+            docker rm "$CONTAINER" 2>/dev/null || true
+        fi
+    done
+    
+    # Remove orphaned volumes if requested
+    if [[ "${CLEAN_INSTALL:-false}" == "true" ]]; then
+        warn "Clean install mode - removing old data..."
+        rm -rf "${SCRIPT_DIR}/unifi-db-data"
+        rm -rf "${SCRIPT_DIR}/unifi-data"
+        rm -rf "${SCRIPT_DIR}/unifi-storage"
+    fi
+    
+    success "Existing containers cleaned up"
+}
 
-echo "=========================================="
-echo "  UniFi Network OS Enforced Installer"
-echo "=========================================="
+#===============================================================================
+# DYNAMIC CONFIGURATION GENERATION
+#===============================================================================
 
-enforce_root
-check_docker
-check_resources
-check_ports
-generate_secure_env
-create_directories
-deploy_containers
-show_access_info
+generate_credentials() {
+    info "Generating secure credentials..."
+    
+    # Auto-detect primary IP address
+    HOST_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' || hostname -I | awk '{print $1}')
+    if [[ -z "$HOST_IP" ]]; then
+        HOST_IP="0.0.0.0"
+        warn "Could not auto-detect IP, using 0.0.0.0 (all interfaces)"
+    fi
+    info "Detected server IP: $HOST_IP"
+    
+    # Generate strong random passwords
+    MONGO_USER="unifi_admin"
+    MONGO_PASS=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c32)
+    FTP_USER="unifi"
+    FTP_PASS=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c24)
+    
+    # Timezone detection
+    TIMEZONE=$(cat /etc/timezone 2>/dev/null || echo "UTC")
+    
+    # Resource limits based on available hardware
+    TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+    TOTAL_MEM_GB=$((TOTAL_MEM_KB / 1024 / 1024))
+    
+    if [[ $TOTAL_MEM_GB -ge 8 ]]; then
+        MEM_LIMIT=2048
+        MEM_LIMIT_SOFT=4G
+        CPU_LIMIT=4.0
+    elif [[ $TOTAL_MEM_GB -ge 4 ]]; then
+        MEM_LIMIT=1536
+        MEM_LIMIT_SOFT=2G
+        CPU_LIMIT=2.0
+    else
+        MEM_LIMIT=1024
+        MEM_LIMIT_SOFT=1536M
+        CPU_LIMIT=1.5
+    fi
+    
+    # Create .env file
+    cat > "$ENV_FILE" <<EOF
+# Auto-generated by setup.sh - $(date)
+# DO NOT EDIT MANUALLY - Changes will be overwritten
+
+# Network Configuration
+HOST_IP=${HOST_IP}
+TIMEZONE=${TIMEZONE}
+
+# MongoDB Credentials (Auto-generated)
+MONGO_USER=${MONGO_USER}
+MONGO_PASS=${MONGO_PASS}
+
+# FTP Credentials (Auto-generated)
+FTP_USER=${FTP_USER}
+FTP_PASS=${FTP_PASS}
+FTP_PASSIVE_PORTS=21000-21010
+
+# Resource Limits (Auto-calculated based on hardware)
+MEM_LIMIT=${MEM_LIMIT}
+MEM_LIMIT_SOFT=${MEM_LIMIT_SOFT}
+CPU_LIMIT=${CPU_LIMIT}
+
+# Security Settings
+PUID=1000
+PGID=1000
+EOF
+    
+    chmod 600 "$ENV_FILE"
+    success "Credentials generated and saved to .env"
+    
+    # Display credentials ONCE
+    echo ""
+    echo "==============================================================================="
+    echo -e "${YELLOW}⚠️  SAVE THESE CREDENTIALS NOW - THEY WILL NOT BE SHOWN AGAIN!${NC}"
+    echo "==============================================================================="
+    echo -e "${GREEN}UniFi Controller:${NC} https://${HOST_IP}:8443"
+    echo -e "${GREEN}FTP Server:${NC}       ftp://${HOST_IP}:21"
+    echo -e "${GREEN}FTP Username:${NC}     ${FTP_USER}"
+    echo -e "${GREEN}FTP Password:${NC}     ${FTP_PASS}"
+    echo -e "${GREEN}MongoDB User:${NC}     ${MONGO_USER}"
+    echo -e "${GREEN}MongoDB Pass:${NC}     ${MONGO_PASS}"
+    echo "==============================================================================="
+    echo ""
+}
+
+#===============================================================================
+# DIRECTORY STRUCTURE & PERMISSIONS
+#===============================================================================
+
+setup_directories() {
+    info "Creating directory structure..."
+    
+    mkdir -p "${SCRIPT_DIR}/unifi-data"
+    mkdir -p "${SCRIPT_DIR}/unifi-db-data"
+    mkdir -p "${SCRIPT_DIR}/unifi-storage/backups"
+    mkdir -p "${SCRIPT_DIR}/vsftpd-config"
+    
+    # Set secure permissions
+    chmod 755 "${SCRIPT_DIR}/unifi-data"
+    chmod 700 "${SCRIPT_DIR}/unifi-db-data"
+    chmod 755 "${SCRIPT_DIR}/unifi-storage"
+    chmod 700 "${SCRIPT_DIR}/unifi-storage/backups"
+    
+    # Ensure vsftpd config exists
+    if [[ ! -f "${SCRIPT_DIR}/vsftpd-config/vsftpd.conf" ]]; then
+        warn "vsftpd.conf not found, creating default..."
+        cat > "${SCRIPT_DIR}/vsftpd-config/vsftpd.conf" <<'VSFTPD_EOF'
+anonymous_enable=NO
+local_enable=YES
+chroot_local_user=YES
+allow_writeable_chroot=NO
+pasv_enable=YES
+pasv_min_port=21000
+pasv_max_port=21010
+local_max_rate=51200
+max_clients=10
+max_per_ip=3
+ssl_enable=YES
+force_local_data_ssl=YES
+force_local_logins_ssl=YES
+rsa_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem
+rsa_private_key_file=/etc/ssl/private/ssl-cert-snakeoil.key
+ssl_ciphers=HIGH
+require_ssl_reuse=NO
+xferlog_enable=YES
+dual_log_enable=YES
+idle_session_timeout=300
+data_connection_timeout=120
+VSFTPD_EOF
+    fi
+    
+    success "Directory structure created with secure permissions"
+}
+
+#===============================================================================
+# SERVICE DEPLOYMENT WITH HEALTH CHECKS
+#===============================================================================
+
+deploy_services() {
+    info "Deploying services with health checks..."
+    
+    cd "$SCRIPT_DIR"
+    
+    # Pull images first
+    info "Pulling Docker images..."
+    docker compose pull || error_exit "Failed to pull Docker images"
+    
+    # Start services
+    info "Starting services..."
+    docker compose up -d || error_exit "Failed to start services"
+    
+    # Wait for MongoDB to be healthy
+    info "Waiting for MongoDB to initialize (up to 60 seconds)..."
+    for i in {1..12}; do
+        if docker inspect --format='{{.State.Health.Status}}' unifi-mongo 2>/dev/null | grep -q "healthy"; then
+            success "MongoDB is healthy"
+            break
+        fi
+        sleep 5
+    done
+    
+    # Wait for UniFi Controller
+    info "Waiting for UniFi Controller to initialize (up to 120 seconds)..."
+    UNIFI_READY=false
+    for i in {1..24}; do
+        if docker inspect --format='{{.State.Health.Status}}' unifi-controller 2>/dev/null | grep -q "healthy"; then
+            success "UniFi Controller is healthy"
+            UNIFI_READY=true
+            break
+        fi
+        sleep 5
+    done
+    
+    if [[ "$UNIFI_READY" != "true" ]]; then
+        warn "UniFi Controller health check timed out. Checking logs..."
+        docker logs unifi-controller --tail 50
+        error_exit "UniFi Controller failed to start properly. Check logs above."
+    fi
+    
+    # Verify FTP service
+    sleep 10
+    if docker ps --format '{{.Names}}' | grep -q "unifi-ftp"; then
+        success "vsftpd service started"
+    else
+        error_exit "vsftpd service failed to start"
+    fi
+    
+    success "All services deployed successfully!"
+}
+
+#===============================================================================
+# POST-DEPLOYMENT VERIFICATION
+#===============================================================================
+
+verify_deployment() {
+    info "Running post-deployment verification..."
+    
+    # Check container status
+    echo ""
+    echo "Container Status:"
+    docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+    
+    # Check network connectivity
+    echo ""
+    info "Testing internal network connectivity..."
+    docker exec unifi-controller ping -c 2 mongo > /dev/null 2>&1 && success "UniFi can reach MongoDB" || warn "Network issue between containers"
+    
+    # Display access information
+    echo ""
+    echo "==============================================================================="
+    echo -e "${GREEN}✅ DEPLOYMENT COMPLETE!${NC}"
+    echo "==============================================================================="
+    echo -e "${BLUE}Access URLs:${NC}"
+    echo "  UniFi Controller: https://${HOST_IP}:8443"
+    echo "  FTP Server:       ftp://${HOST_IP}:21"
+    echo ""
+    echo -e "${BLUE}Shared Storage Location:${NC}"
+    echo "  Host Path: ${SCRIPT_DIR}/unifi-storage"
+    echo "  UniFi Path: /storage"
+    echo "  FTP Path: /home/vsftpd/unifi"
+    echo ""
+    echo -e "${YELLOW}Important Notes:${NC}"
+    echo "  1. Accept the SSL certificate warning in your browser"
+    echo "  2. Complete the UniFi setup wizard at https://${HOST_IP}:8443"
+    echo "  3. FTP rate limited to 50KB/s to prevent DB I/O starvation"
+    echo "  4. Backup files saved to: ${SCRIPT_DIR}/unifi-storage/backups"
+    echo "==============================================================================="
+}
+
+#===============================================================================
+# MAIN EXECUTION
+#===============================================================================
+
+main() {
+    echo "==============================================================================="
+    echo "  UniFi Network OS - Auto-Dynamic Setup with Enforcement & Rate Limiting"
+    echo "==============================================================================="
+    echo ""
+    
+    # Run all pre-flight checks
+    check_root
+    check_docker
+    check_resources
+    check_ports
+    cleanup_existing
+    
+    # Generate configuration
+    generate_credentials
+    setup_directories
+    
+    # Deploy services
+    deploy_services
+    
+    # Verify deployment
+    verify_deployment
+    
+    echo ""
+    success "Setup completed successfully! Log file: $LOG_FILE"
+}
+
+# Execute main function
+main "$@"
