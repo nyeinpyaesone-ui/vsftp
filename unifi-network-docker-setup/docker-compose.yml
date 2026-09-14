@@ -9,8 +9,8 @@ services:
       - MONGO_HOST=mongodb
       - MONGO_PORT=27017
       - MONGO_DBNAME=unifi
-      - MONGO_USER=unifi
-      - MONGO_PASS=${MONGO_PASSWORD}
+      - MONGO_USER=${MONGO_USER}
+      - MONGO_PASS=${MONGO_PASS}
       - MEM_LIMIT=${MEM_LIMIT:-1024}
       - MEM_STARTUP=${MEM_STARTUP:-1024}
     volumes:
@@ -43,8 +43,8 @@ services:
     image: mongo:7.0
     container_name: unifi-mongodb
     environment:
-      - MONGO_INITDB_ROOT_USERNAME=${MONGO_ROOT_USER:-unifi_root}
-      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASSWORD}
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_ROOT_USER}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASS}
       - MONGO_INITDB_DATABASE=unifi
     volumes:
       - ./unifi-db-data:/data/db
@@ -63,9 +63,9 @@ services:
     image: fauria/vsftpd:latest
     container_name: unifi-ftp
     environment:
-      - FTP_USER_1=${FTP_USER:-unifi},${FTP_PASSWORD}
+      - FTP_USER_1=${FTP_USER},${FTP_PASS}
       - FTP_LOGGING=${FTP_LOGGING:-YES}
-      - PASV_ADDRESS=${PASV_ADDRESS:-AUTO}
+      - PASV_ADDRESS=${SERVER_IP}
       - PASV_MIN_PORT=${PASV_MIN_PORT:-30000}
       - PASV_MAX_PORT=${PASV_MAX_PORT:-30010}
     volumes:
