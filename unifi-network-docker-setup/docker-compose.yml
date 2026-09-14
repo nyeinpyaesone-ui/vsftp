@@ -1,65 +1,85 @@
-version: '3.8'
-
 services:
   unifi-network:
     image: lscr.io/linuxserver/unifi-network-application:latest
-    container_name: unifi-network-application
+    container_name: unifi-network
     environment:
       - PUID=1000
       - PGID=1000
-      - MEM_LIMIT=2048
-      - MEM_STARTUP=1024
-      - MONGO_HOST=unifi-db
+      - TZ=${TZ:-UTC}
+      - MONGO_HOST=mongodb
       - MONGO_PORT=27017
       - MONGO_DBNAME=unifi
       - MONGO_USER=unifi
-      - MONGO_PASS=unifi_password
+      - MONGO_PASS=${MONGO_PASSWORD}
+      - MEM_LIMIT=${MEM_LIMIT:-1024}
+      - MEM_STARTUP=${MEM_STARTUP:-1024}
     volumes:
       - ./unifi-data:/config
       - ./unifi-storage:/storage
+      - ./unifi-storage/backups:/config/data/backup
+      - /etc/localtime:/etc/localtime:ro
     ports:
-      - 8080:8080
-      - 8443:8443
-      - 3478:3478/udp
-      - 10001:10001/udp
-      - 27117:27117
+      - ${UNIFI_HTTP_PORT:-8080}:8080
+      - ${UNIFI_HTTPS_PORT:-8443}:8443
+      - ${UNIFI_UDP_PORT:-3478}:3478/udp
+      - ${UNIFI_STUN_PORT:-10001}:10001/udp
+      - ${UNIFI_DISPLAY_PORT:-8081}:8081
+      - ${UNIFI_RTSP_PORT:-8843}:8843
+      - ${UNIFI_SYSLOG_PORT:-5514}:5514/udp
     depends_on:
-      - unifi-db
-    restart: unless-stopped
+      mongodb:
+        condition: service_healthy
     networks:
       - unifi-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
-  unifi-db:
-    image: mongo:6.0
-    container_name: unifi-db
+  mongodb:
+    image: mongo:7.0
+    container_name: unifi-mongodb
     environment:
+      - MONGO_INITDB_ROOT_USERNAME=${MONGO_ROOT_USER:-unifi_root}
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASSWORD}
       - MONGO_INITDB_DATABASE=unifi
-      - MONGO_INITDB_ROOT_USERNAME=unifi
-      - MONGO_INITDB_ROOT_PASSWORD=unifi_password
     volumes:
       - ./unifi-db-data:/data/db
-    restart: unless-stopped
+      - ./mongodb-init:/docker-entrypoint-initdb.d:ro
     networks:
       - unifi-network
+    restart: unless-stopped
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/unifi --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   vsftpd:
-    image: fauria/vsftpd
-    container_name: vsftpd-server
+    image: fauria/vsftpd:latest
+    container_name: unifi-ftp
     environment:
-      - FTP_USER=unifi
-      - FTP_PASS=unifi_ftp_password
-      - PASV_ADDRESS=YOUR_SERVER_IP_HERE
-      - PASV_MIN_PORT=30000
-      - PASV_MAX_PORT=30010
+      - FTP_USER_1=${FTP_USER:-unifi},${FTP_PASSWORD}
+      - FTP_LOGGING=${FTP_LOGGING:-YES}
+      - PASV_ADDRESS=${PASV_ADDRESS:-AUTO}
+      - PASV_MIN_PORT=${PASV_MIN_PORT:-30000}
+      - PASV_MAX_PORT=${PASV_MAX_PORT:-30010}
     volumes:
       - ./unifi-storage:/home/vsftpd/unifi
-      - ./vsftpd-config:/etc/vsftpd
+      - ./vsftpd-config/vsftpd.conf:/etc/vsftpd/vsftpd.conf:ro
+      - ./vsftpd-logs:/var/log/vsftpd
     ports:
       - 21:21
-      - 30000-30010:30000-30010
-    restart: unless-stopped
+      - ${PASV_MIN_PORT:-30000}-${PASV_MAX_PORT:-30010}:${PASV_MIN_PORT:-30000}-${PASV_MAX_PORT:-30010}
     networks:
       - unifi-network
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
 
 networks:
   unifi-network:
