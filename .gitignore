@@ -1,9 +1,84 @@
-```
-.vscode/
+```dockerfile
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Logs and temp files
 *.log
 *.tmp
-```node_modules/
-.next/
+
+# Editors
+.vscode/
+.idea/
+
+# Docker related
+.dockerenv
+!docker-compose.yml
+
+# Build artifacts
 dist/
 build/
-node_modules/
+target/
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.a
+*.out
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.gitattributes
+.next
+.python-version
+.hypothesis/
+.coverage/
+.pytest_cache/
+.mypy_cache/
+
+# Compression
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
+```.next/
