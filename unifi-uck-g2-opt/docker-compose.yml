@@ -1,0 +1,106 @@
+services:
+  mongo:
+    image: mongo:7.0
+    platform: linux/arm64
+    container_name: unifi-db
+    restart: unless-stopped
+    networks:
+      - unifi-net
+    volumes:
+      - ./data/db-data:/data/db:rw
+      - ./configs/mongo/mongod.conf:/etc/mongod.conf:ro
+    command: mongod --config /etc/mongod.conf
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${DB_ROOT_USER}
+      - MONGO_INITDB_ROOT_PASSWORD=${DB_ROOT_PASS}
+    mem_limit: 300m
+    mem_reservation: 256m
+    cpus: 0.5
+    pids_limit: 512
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 1024
+    storage_opt:
+      size: "2G"
+
+  unifi:
+    image: lscr.io/linuxserver/unifi-network-application:latest
+    platform: linux/arm64
+    container_name: unifi-controller
+    restart: unless-stopped
+    networks:
+      - unifi-net
+      - frontend-net
+    ports:
+      - "8443:8443"
+      - "8080:8080"
+      - "8448:8448"
+      - "3478:3478/udp"
+      - "10001:10001/udp"
+      - "1900:1900/udp"
+    volumes:
+      - ./data/unifi-config:/config:rw
+      - ./data/shared-storage:/backups:rw
+      - tmp-logs:/var/log:rw
+      - tmp-tmp:/tmp:rw
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TIMEZONE}
+      - MONGO_HOST=mongo
+      - MONGO_PORT=27017
+      - MONGO_USER=${DB_USER}
+      - MONGO_PASS=${DB_USER_PASS}
+      - MONGO_DBNAME=unifi
+      - MEM_LIMIT=256M
+      - MEM_STARTUP=256M
+      - JAVA_TOOL_OPTIONS=-Xmx256m -Xms256m -XX:+UseSerialGC
+    depends_on:
+      - mongo
+    mem_limit: 300m
+    mem_reservation: 256m
+    cpus: 1.0
+    pids_limit: 1024
+    init: true
+    storage_opt:
+      size: "3G"
+
+  vsftpd:
+    image: fauria/vsftpd:latest
+    platform: linux/arm64
+    container_name: unifi-ftp
+    restart: unless-stopped
+    networks:
+      - frontend-net
+    ports:
+      - "21:21"
+      - "20000-20010:20000-20010"
+    volumes:
+      - ./data/shared-storage:/home/unifi_backup:rw
+      - ./configs/vsftpd/vsftpd.conf:/etc/vsftpd.conf:ro
+      - tmp-ftp:/var/log/vsftpd:rw
+    environment:
+      - FTP_USER_1=unifi_backup
+      - FTP_PASS_1=${FTP_PASS}
+      - PASV_ADDRESS=${SERVER_IP}
+      - PASV_MIN_PORT=20000
+      - PASV_MAX_PORT=20010
+    mem_limit: 64m
+    mem_reservation: 48m
+    cpus: 0.25
+    pids_limit: 128
+    storage_opt:
+      size: "500M"
+
+networks:
+  unifi-net:
+    driver: bridge
+    internal: true
+  frontend-net:
+    driver: bridge
+
+volumes:
+  tmp-logs:
+  tmp-tmp:
+  tmp-ftp:
