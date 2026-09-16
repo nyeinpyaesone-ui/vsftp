@@ -1,17 +1,5 @@
 ```
-# Dependencies
-node_modules/
-venv/
-.venv/
-__pycache__/
-.mypy_cache/
-.pytest_cache/
-dist/
-build/
-target/
-.gradle/
-
-# Compiled files
+# Compiled and binary files
 *.pyc
 *.class
 *.o
@@ -22,13 +10,24 @@ target/
 *.obj
 *.out
 
-# Editors/IDEs
+# Dependencies
+node_modules/
+venv/
+.venv/
+__pycache__/
+dist/
+build/
+target/
+.gradle/
+
+# Editor/IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
+*.tmp
 
-# System files
+# System/Environment files
 .DS_Store
 Thumbs.db
 .env
@@ -64,5 +63,4 @@ htmlcov/
 *.tar.bz2
 *.tar.xz
 *.tar.zst
-```.next/
-.next/
+```
