@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -9,15 +10,17 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/rs/cors"
 )
 
-//go:embed web/*
+//go:embed web
 var webFiles embed.FS
 
 // AppState holds the dynamic state of the system
@@ -83,7 +86,38 @@ func main() {
 
 	log.Printf("🚀 UniFi UCP Production Server starting on port %s", port)
 	log.Printf("📊 Dashboard: http://localhost:%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, handler))
+
+	// Create server with context for graceful shutdown
+	server := &http.Server{
+		Addr:    ":" + port,
+		Handler: handler,
+	}
+
+	// Channel to listen for interrupt signals
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start server in a goroutine
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server failed: %v", err)
+		}
+	}()
+
+	// Wait for interrupt signal
+	<-quit
+	addLog("info", "Shutdown signal received...")
+
+	// Create a deadline for shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Attempt graceful shutdown
+	if err := server.Shutdown(ctx); err != nil {
+		log.Printf("Server forced to shutdown: %v", err)
+	}
+
+	addLog("info", "Server stopped gracefully")
 }
 
 func getStateHandler(w http.ResponseWriter, r *http.Request) {
@@ -103,10 +137,20 @@ func getLogsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func deployHandler(w http.ResponseWriter, r *http.Request) {
+	// Validate Content-Type header
+	contentType := r.Header.Get("Content-Type")
+	if contentType != "" && !strings.Contains(contentType, "application/json") {
+		http.Error(w, `{"error":"Content-Type must be application/json"}`, http.StatusUnsupportedMediaType)
+		return
+	}
+
 	var req struct {
 		Target string `json:"target"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
 
 	addLog("info", fmt.Sprintf("Deploying %s...", req.Target))
 	

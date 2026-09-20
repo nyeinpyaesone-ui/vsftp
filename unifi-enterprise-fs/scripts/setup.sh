@@ -103,19 +103,21 @@ analyze_hardware() {
     log_success "Hardware requirements met"
     
     # Dynamic Resource Allocation (Professional Tuning)
-    # MongoDB: 25% of RAM (max 2GB), 30% of CPU
+    # MongoDB: 25% of RAM (max 2GB, min 512MB), 30% of CPU
     DB_MEM_LIMIT=$((TOTAL_RAM_GB * 25 / 100))
     [[ $DB_MEM_LIMIT -gt 2 ]] && DB_MEM_LIMIT=2
+    [[ $DB_MEM_LIMIT -lt 1 ]] && DB_MEM_LIMIT=1
     DB_MEM_RESERVE=$((DB_MEM_LIMIT / 2))
     DB_CPU_LIMIT=$(echo "scale=1; $CPU_CORES * 0.3" | bc)
     DB_CPU_RESERVE=$(echo "scale=1; $DB_CPU_LIMIT / 2" | bc)
     DB_CACHE_SIZE=$(echo "scale=1; $DB_MEM_LIMIT * 0.6" | bc)
     
-    # UniFi Controller: 35% of RAM (max 3GB), 50% of CPU
+    # UniFi Controller: 35% of RAM (max 3GB, min 1GB), 50% of CPU
     UNIFI_MEM_LIMIT=$((TOTAL_RAM_GB * 35 / 100))
     [[ $UNIFI_MEM_LIMIT -gt 3 ]] && UNIFI_MEM_LIMIT=3
     [[ $UNIFI_MEM_LIMIT -lt 1 ]] && UNIFI_MEM_LIMIT=1
     UNIFI_MEM_STARTUP=$((UNIFI_MEM_LIMIT / 2))
+    [[ $UNIFI_MEM_STARTUP -lt 1 ]] && UNIFI_MEM_STARTUP=1
     UNIFI_CPU_LIMIT=$(echo "scale=1; $CPU_CORES * 0.5" | bc)
     UNIFI_CPU_RESERVE=$(echo "scale=1; $UNIFI_CPU_LIMIT / 2" | bc)
     
@@ -148,12 +150,27 @@ analyze_network() {
         log_success "Detected server IP: $HOST_IP"
     fi
     
-    # Port conflict detection
+    # Port conflict detection (portable method)
     declare -a PORTS=(8443 8080 8448 10001 3478 21 27017)
     for PORT in "${PORTS[@]}"; do
-        if ss -tuln | grep -q ":$PORT "; then
-            log_error "Port $PORT is already in use. Stop the conflicting service."
-            exit 1
+        # Try multiple methods for portability
+        if command -v ss &>/dev/null; then
+            if ss -tuln | grep -q ":$PORT "; then
+                log_error "Port $PORT is already in use. Stop the conflicting service."
+                exit 1
+            fi
+        elif command -v netstat &>/dev/null; then
+            if netstat -tuln | grep -q ":$PORT "; then
+                log_error "Port $PORT is already in use. Stop the conflicting service."
+                exit 1
+            fi
+        elif command -v lsof &>/dev/null; then
+            if lsof -i :"$PORT" &>/dev/null; then
+                log_error "Port $PORT is already in use. Stop the conflicting service."
+                exit 1
+            fi
+        else
+            log_warn "Cannot check port $PORT (no ss/netstat/lsof available)"
         fi
     done
     log_success "All required ports are available"
@@ -227,8 +244,8 @@ UNIFI_CPU_RESERVE=${UNIFI_CPU_RESERVE}
 # -----------------------------------------------------------------------------
 FTP_USER=${FTP_USER}
 FTP_PASS=${FTP_PASS}
-FTP_PASSIVE_MIN=${FTP_PASSIVE_MIN}
-FTP_PASSIVE_MAX=${FTP_PASSIVE_MAX}
+FTP_PASSIVE_MIN=${FTP_PASSIVE_MIN:-30000}
+FTP_PASSIVE_MAX=${FTP_PASSIVE_MAX:-30010}
 FTP_MAX_CLIENTS=20
 FTP_MAX_PER_IP=5
 FTP_RATE_LIMIT=102400
@@ -308,13 +325,13 @@ display_info() {
     echo ""
     echo -e "${YELLOW}Database Credentials (Save These!):${NC}"
     echo "  Root User:  $DB_ROOT_USER"
-    echo "  Root Pass:  $DB_ROOT_PASS"
+    echo "  Root Pass:  [REDACTED - Check .env file]"
     echo "  App User:   $DB_USER"
-    echo "  App Pass:   $DB_USER_PASS"
+    echo "  App Pass:   [REDACTED - Check .env file]"
     echo ""
     echo -e "${YELLOW}FTP Credentials (Save These!):${NC}"
     echo "  Username:   $FTP_USER"
-    echo "  Password:   $FTP_PASS"
+    echo "  Password:   [REDACTED - Check .env file]"
     echo "  Protocol:   FTPS (FTP over SSL/TLS)"
     echo ""
     echo -e "${YELLOW}Storage Locations:${NC}"
@@ -322,7 +339,7 @@ display_info() {
     echo "  UniFi Config:   $PROJECT_ROOT/data/unifi-config"
     echo "  Database:       $PROJECT_ROOT/data/db-data"
     echo ""
-    echo -e "${RED}IMPORTANT: Save these credentials securely. They cannot be recovered!${NC}"
+    echo -e "${RED}IMPORTANT: Credentials stored securely in .env file. Keep it safe!${NC}"
     echo "==============================================================================="
 }
 

@@ -50,9 +50,10 @@ install_dependencies() {
     # Install Docker if missing (Critical for functionality)
     if ! command -v docker &>/dev/null; then
         log_warn "Docker not found. Installing Docker CE..."
-        curl -fsSL https://get.docker.com -o get-docker.sh
-        sh get-docker.sh
-        rm get-docker.sh
+        curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+        chmod +x /tmp/get-docker.sh
+        /tmp/get-docker.sh
+        rm -f /tmp/get-docker.sh
         systemctl enable docker && systemctl start docker
         log_success "Docker installed and started."
     fi
@@ -75,14 +76,19 @@ generate_source_code() {
 package main
 
 import (
+	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"github.com/gorilla/mux"
 	"github.com/rs/cors"
@@ -142,6 +148,13 @@ func main() {
 
 	// API: Deploy All
 	r.HandleFunc("/api/deploy", func(w http.ResponseWriter, r *http.Request) {
+		// Validate Content-Type
+		contentType := r.Header.Get("Content-Type")
+		if contentType != "" && !strings.Contains(contentType, "application/json") {
+			http.Error(w, `{"error":"Content-Type must be application/json"}`, http.StatusUnsupportedMediaType)
+			return
+		}
+
 		if state.IsDeployed {
 			http.Error(w, `{"error":"Already deployed"}`, http.StatusConflict)
 			return
@@ -180,8 +193,40 @@ func main() {
 	r.PathPrefix("/").Handler(http.FileServer(http.FS(webFS)))
 
 	handler := cors.Default().Handler(r)
-	log.Printf("🚀 UniFi UCP Listening on :%d", 8080)
-	log.Fatal(http.ListenAndServe(":8080", handler))
+	
+	port := os.Getenv("UCP_PORT")
+	if port == "" {
+		port = "8080"
+	}
+	
+	log.Printf("🚀 UniFi UCP Listening on :%s", port)
+	
+	// Create server with graceful shutdown
+	server := &http.Server{
+		Addr:    ":" + port,
+		Handler: handler,
+	}
+	
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server failed: %v", err)
+		}
+	}()
+	
+	<-quit
+	addLog("Shutdown signal received...")
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	
+	if err := server.Shutdown(ctx); err != nil {
+		log.Printf("Server forced to shutdown: %v", err)
+	}
+	
+	addLog("Server stopped gracefully")
 }
 GO_EOF
 

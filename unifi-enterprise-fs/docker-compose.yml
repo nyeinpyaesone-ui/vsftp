@@ -111,7 +111,7 @@ services:
       - unifi-frontend
     ports:
       - "${HOST_IP}:21:21/tcp"       # FTP Control
-      - "${FTP_PASSIVE_MIN}:${FTP_PASSIVE_MAX}:${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}/tcp" # Passive Data
+      - "${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}:${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}/tcp" # Passive Data
     volumes:
       - ${STORAGE_ROOT}/shared-storage:/home/${FTP_USER}:rw
       - ${STORAGE_ROOT}/ftp-logs:/var/log/vsftpd:rw
