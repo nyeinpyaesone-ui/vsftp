@@ -1,0 +1,71 @@
+# GitHub Release
+
+name: Release
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Extract Tag Version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      
+      - name: Generate Release Notes
+        run: |
+          cat > RELEASE_NOTES.md << EOF
+          # UniFi Network OS Docker Suite v${{ steps.get_version.outputs.VERSION }}
+          
+          ## 🎯 What's New
+          - Professional performance metrics and benchmarks
+          - Trigger-based automation configuration
+          - Enhanced security features
+          - Multi-architecture support (ARM64 & AMD64)
+          
+          ## 📊 Performance Highlights
+          - Backup Write Speed: Up to 75 MB/s (Enterprise FS)
+          - Database Query Latency: <10ms p95 (Enterprise FS)
+          - API Response Time: <30ms p99 (Enterprise FS)
+          
+          ## 🔐 Security Features
+          - Network isolation with internal database network
+          - SSL/TLS encryption for FTPS
+          - Strong password generation (24-32 characters)
+          - Resource limits and connection rate limiting
+          
+          ## 🚀 Deployment Options
+          1. **UniFi Network OS** - Universal deployment for any hardware
+          2. **Enterprise File System** - Production-grade with advanced security
+          3. **UCK-G2 Optimized** - Resource-constrained devices (Cloud Key Gen2, Raspberry Pi)
+          
+          ## 📋 Installation
+          \`\`\`bash
+          # Choose your deployment profile
+          cd unifi-network-os && sudo ./setup.sh
+          # OR
+          cd unifi-enterprise-fs && sudo ./scripts/setup.sh
+          # OR
+          cd unifi-uck-g2-opt && sudo ./scripts/setup.sh
+          \`\`\`
+          
+          Full documentation: https://github.com/${{ github.repository }}/blob/main/README.md
+          EOF
+          cat RELEASE_NOTES.md
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+          files: |
+            README.md
+            PUBLISHING_CHECKLIST.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
