@@ -1,0 +1,142 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  validate:
+    name: Validate Repository Structure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Verify Directory Structure
+        run: |
+          echo "Validating repository structure..."
+          required_dirs=("unifi-network-os" "unifi-enterprise-fs" "unifi-uck-g2-opt" "cmd" "web")
+          for dir in "${required_dirs[@]}"; do
+            if [ ! -d "$dir" ]; then
+              echo "::error::Missing required directory: $dir"
+              exit 1
+            fi
+          done
+          echo "✅ All required directories present"
+      
+      - name: Validate README.md
+        run: |
+          if [ ! -f "README.md" ]; then
+            echo "::error::README.md not found"
+            exit 1
+          fi
+          # Check for required sections
+          grep -q "Performance Output Rates" README.md || (echo "::error::Missing Performance Output Rates section" && exit 1)
+          grep -q "Trigger Rate Configuration" README.md || (echo "::error::Missing Trigger Rate Configuration section" && exit 1)
+          grep -q "Repository Status" README.md || (echo "::error::Missing Repository Status section" && exit 1)
+          echo "✅ README.md validation passed"
+      
+      - name: Validate Docker Compose Files
+        run: |
+          compose_files=("unifi-network-os/docker-compose.yml" "unifi-enterprise-fs/docker-compose.yml" "unifi-uck-g2-opt/docker-compose.yml")
+          for file in "${compose_files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "::error::Missing docker-compose.yml in $(dirname $file)"
+              exit 1
+            fi
+          done
+          echo "✅ All docker-compose.yml files present"
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check for Sensitive Data
+        run: |
+          echo "Scanning for potential sensitive data..."
+          ! grep -r "password=" --include="*.yml" --include="*.yaml" . | grep -v "PASSWORD_ENV" || (echo "::error::Hardcoded passwords detected" && exit 1)
+          ! grep -r "secret=" --include="*.yml" --include="*.yaml" . | grep -v "SECRET_ENV" || (echo "::error::Hardcoded secrets detected" && exit 1)
+          echo "✅ No hardcoded credentials found"
+      
+      - name: Validate Shell Scripts
+        run: |
+          find . -name "*.sh" -type f -exec shellcheck {} \; || echo "::warning::ShellCheck found issues (non-blocking)"
+
+  build-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    needs: [validate, security-scan]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Test Docker Compose Configuration
+        run: |
+          cd unifi-network-os
+          docker compose config > /dev/null || (echo "::error::Invalid docker-compose.yml in unifi-network-os" && exit 1)
+          echo "✅ unifi-network-os docker-compose.yml valid"
+          
+          cd ../unifi-enterprise-fs
+          docker compose config > /dev/null || (echo "::error::Invalid docker-compose.yml in unifi-enterprise-fs" && exit 1)
+          echo "✅ unifi-enterprise-fs docker-compose.yml valid"
+          
+          cd ../unifi-uck-g2-opt
+          docker compose config > /dev/null || (echo "::error::Invalid docker-compose.yml in unifi-uck-g2-opt" && exit 1)
+          echo "✅ unifi-uck-g2-opt docker-compose.yml valid"
+
+  documentation:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Verify Documentation Completeness
+        run: |
+          echo "Checking documentation completeness..."
+          
+          # Check README sections
+          required_sections=(
+            "Performance Output Rates"
+            "Trigger Rate Configuration"
+            "Repository Status"
+            "Development Roadmap"
+            "Security Features"
+          )
+          
+          for section in "${required_sections[@]}"; do
+            grep -q "$section" README.md || (echo "::error::Missing section: $section" && exit 1)
+          done
+          
+          # Check for performance metrics
+          grep -q "MB/s" README.md || (echo "::error::Missing performance metrics" && exit 1)
+          grep -q "ms (p" README.md || (echo "::error::Missing latency metrics" && exit 1)
+          
+          echo "✅ Documentation completeness verified"
+
+  publish-ready:
+    name: Publish Readiness Check
+    runs-on: ubuntu-latest
+    needs: [validate, security-scan, build-test, documentation]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Final Verification
+        run: |
+          echo "🎉 All checks passed! Repository is ready for publication."
+          echo ""
+          echo "Summary:"
+          echo "  ✅ Repository structure validated"
+          echo "  ✅ Security scan passed"
+          echo "  ✅ Docker configurations valid"
+          echo "  ✅ Documentation complete"
+          echo ""
+          echo "Next steps:"
+          echo "  1. Create a new GitHub repository"
+          echo "  2. Push code: git remote add origin <your-repo-url>"
+          echo "  3. git push -u origin main"
+          echo "  4. Enable GitHub Actions in repository settings"
