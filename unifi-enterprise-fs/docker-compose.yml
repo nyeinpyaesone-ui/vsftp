@@ -1,0 +1,180 @@
+version: '3.8'
+
+# UniFi Network OS Enterprise File System Integration
+# Architecture: Frontend (UniFi) + Backend (MongoDB) + Storage Service (vsftpd)
+# Network Engineering Best Practices: Isolated networks, resource limits, health checks
+
+services:
+  # ============================================================================
+  # BACKEND: MongoDB Database (Isolated Internal Network)
+  # ============================================================================
+  unifi-db:
+    image: mongo:7.0
+    container_name: unifi-db
+    restart: unless-stopped
+    networks:
+      - unifi-internal
+    volumes:
+      - ${STORAGE_ROOT}/db-data:/data/db:rw
+      - ${STORAGE_ROOT}/db-config:/data/configdb:rw
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=${DB_ROOT_USER}
+      - MONGO_INITDB_ROOT_PASSWORD=${DB_ROOT_PASS}
+      - MONGO_INITDB_DATABASE=unifi
+    command: >
+      mongod --bind_ip_all 
+      --wiredTigerCacheSizeGB ${DB_CACHE_SIZE}
+      --storageEngine wiredTiger
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '${DB_CPU_LIMIT}'
+          memory: ${DB_MEM_LIMIT}
+        reservations:
+          cpus: '${DB_CPU_RESERVE}'
+          memory: ${DB_MEM_RESERVE}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ============================================================================
+  # FRONTEND: UniFi Network Controller Application
+  # ============================================================================
+  unifi-controller:
+    image: lscr.io/linuxserver/unifi-network-application:latest
+    container_name: unifi-controller
+    restart: unless-stopped
+    networks:
+      - unifi-internal
+      - unifi-frontend
+    ports:
+      - "${HOST_IP}:8443:8443/tcp"   # HTTPS Web Interface
+      - "${HOST_IP}:8080:8080/tcp"   # HTTP Portal Redirect
+      - "${HOST_IP}:8448:8448/tcp"   # Mobile App Portal
+      - "${HOST_IP}:10001:10001/udp" # Device Discovery
+      - "${HOST_IP}:3478:3478/udp"   # STUN Server
+    volumes:
+      - ${STORAGE_ROOT}/unifi-config:/config:rw
+      - ${STORAGE_ROOT}/shared-storage:/storage/backups:rw
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - MEM_LIMIT=${UNIFI_MEM_LIMIT}
+      - MEM_STARTUP=${UNIFI_MEM_STARTUP}
+      - MONGO_HOST=unifi-db
+      - MONGO_PORT=27017
+      - MONGO_USER=${DB_USER}
+      - MONGO_PASS=${DB_USER_PASS}
+      - MONGO_DBNAME=unifi
+      - TZ=${TIMEZONE}
+    depends_on:
+      unifi-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sfk https://localhost:8443/api/login || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '${UNIFI_CPU_LIMIT}'
+          memory: ${UNIFI_MEM_LIMIT}
+        reservations:
+          cpus: '${UNIFI_CPU_RESERVE}'
+          memory: ${UNIFI_MEM_RESERVE}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+  # ============================================================================
+  # STORAGE SERVICE: vsftpd Pre-configured FTP Server
+  # ============================================================================
+  vsftpd-server:
+    image: fauria/vsftpd:latest
+    container_name: vsftpd-server
+    restart: unless-stopped
+    networks:
+      - unifi-frontend
+    ports:
+      - "${HOST_IP}:21:21/tcp"       # FTP Control
+      - "${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}:${FTP_PASSIVE_MIN}-${FTP_PASSIVE_MAX}/tcp" # Passive Data
+    volumes:
+      - ${STORAGE_ROOT}/shared-storage:/home/${FTP_USER}:rw
+      - ${STORAGE_ROOT}/ftp-logs:/var/log/vsftpd:rw
+    environment:
+      - FTP_USER=${FTP_USER}
+      - FTP_PASS=${FTP_PASS}
+      - PASV_ADDRESS=${HOST_IP}
+      - PASV_MIN_PORT=${FTP_PASSIVE_MIN}
+      - PASV_MAX_PORT=${FTP_PASSIVE_MAX}
+      - PASV_ENABLE=YES
+      - LOCAL_ENABLE=YES
+      - WRITE_ENABLE=YES
+      - ANONYMOUS_ENABLE=NO
+      - SSL_ENABLE=YES
+      - SSL_TLS_REQCTRL=YES
+      - FORCE_LOCAL_DATA_SSL=YES
+      - FORCE_LOCAL_LOGON_SSL=YES
+      - RSA_CERTIFICATE_FILE=/etc/vsftpd/vsftpd.pem
+      - RSA_PRIVATE_KEY_FILE=/etc/vsftpd/vsftpd.pem
+      - MAX_CLIENTS=${FTP_MAX_CLIENTS}
+      - MAX_PER_IP=${FTP_MAX_PER_IP}
+      - RATE_LIMIT=${FTP_RATE_LIMIT}
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/21"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '${FTP_CPU_LIMIT}'
+          memory: ${FTP_MEM_LIMIT}
+        reservations:
+          cpus: '${FTP_CPU_RESERVE}'
+          memory: ${FTP_MEM_RESERVE}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+networks:
+  # Internal network: MongoDB ↔ UniFi Controller (No external access)
+  unifi-internal:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+  
+  # Frontend network: UniFi Controller ↔ vsftpd ↔ Host (Public access)
+  unifi-frontend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.29.0.0/24
+
+volumes:
+  db-data:
+  db-config:
+  unifi-config:
+  shared-storage:
+  ftp-logs:
