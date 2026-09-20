@@ -15,8 +15,6 @@ vsftp-temp
 #Editor/IDE
 .vscode/
 .idea/
-*.swp
-*.swo
 
 #Python
 __pycache__/
