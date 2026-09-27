@@ -104,7 +104,7 @@ services:
   # STORAGE SERVICE: vsftpd Pre-configured FTP Server
   # ============================================================================
   vsftpd-server:
-    image: fauria/vsftpd:latest
+    image: delfer/alpine-ftp-server@sha256:60bb774d8408d9d4d5c74d05d1c086a34ce192c6c1a142ffac268cac0dbc6fac
     container_name: vsftpd-server
     restart: unless-stopped
     networks:
@@ -115,29 +115,17 @@ services:
     volumes:
       - ${STORAGE_ROOT}/shared-storage:/home/${FTP_USER}:rw
       - ${STORAGE_ROOT}/ftp-logs:/var/log/vsftpd:rw
+      - ./configs/vsftpd/vsftpd.conf:/etc/vsftpd/vsftpd.conf:ro
+      - ${STORAGE_ROOT}/ftp-tls:/etc/vsftpd/tls:ro
     environment:
-      - FTP_USER=${FTP_USER}
-      - FTP_PASS=${FTP_PASS}
-      - PASV_ADDRESS=${HOST_IP}
-      - PASV_MIN_PORT=${FTP_PASSIVE_MIN}
-      - PASV_MAX_PORT=${FTP_PASSIVE_MAX}
-      - PASV_ENABLE=YES
-      - LOCAL_ENABLE=YES
-      - WRITE_ENABLE=YES
-      - ANONYMOUS_ENABLE=NO
-      - SSL_ENABLE=YES
-      - SSL_TLS_REQCTRL=YES
-      - FORCE_LOCAL_DATA_SSL=YES
-      - FORCE_LOCAL_LOGON_SSL=YES
-      - RSA_CERTIFICATE_FILE=/etc/vsftpd/vsftpd.pem
-      - RSA_PRIVATE_KEY_FILE=/etc/vsftpd/vsftpd.pem
-      - MAX_CLIENTS=${FTP_MAX_CLIENTS}
-      - MAX_PER_IP=${FTP_MAX_PER_IP}
-      - RATE_LIMIT=${FTP_RATE_LIMIT}
-    cap_add:
-      - NET_ADMIN
+      - USERS=${FTP_USER}|${FTP_PASS:?FTP_PASS is required}|/home/${FTP_USER}|1000|1000
+      - ADDRESS=${HOST_IP}
+      - MIN_PORT=${FTP_PASSIVE_MIN}
+      - MAX_PORT=${FTP_PASSIVE_MAX}
+      - TLS_CERT=/etc/vsftpd/tls/vsftpd.crt
+      - TLS_KEY=/etc/vsftpd/tls/vsftpd.key
     healthcheck:
-      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/21"]
+      test: ["CMD", "nc", "-z", "127.0.0.1", "21"]
       interval: 30s
       timeout: 5s
       retries: 3

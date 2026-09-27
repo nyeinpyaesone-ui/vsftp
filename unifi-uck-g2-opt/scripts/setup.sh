@@ -83,6 +83,29 @@ setup_directories() {
     chown -R 1000:1000 data/shared-storage
 }
 
+# Create a persistent certificate for explicit FTPS. Existing certificates are kept.
+setup_ftp_tls() {
+    local tls_dir="data/ftp-tls"
+    install -d -m 700 "$tls_dir"
+    if [[ ! -e "$tls_dir/vsftpd.crt" && ! -e "$tls_dir/vsftpd.key" ]]; then
+        (umask 077; openssl req -x509 -nodes -newkey rsa:3072 -days 365 \
+            -keyout "$tls_dir/vsftpd.key" -out "$tls_dir/vsftpd.crt" \
+            -subj "/CN=${SERVER_IP}" -addext "subjectAltName=IP:${SERVER_IP}")
+    fi
+    # Fail before deployment if either file is missing or invalid.
+    openssl x509 -in "$tls_dir/vsftpd.crt" -noout -checkend 0
+    openssl pkey -in "$tls_dir/vsftpd.key" -noout -check
+    if ! cmp -s <(openssl x509 -in "$tls_dir/vsftpd.crt" -pubkey -noout) \
+                <(openssl pkey -in "$tls_dir/vsftpd.key" -pubout); then
+        echo "Error: FTPS certificate and private key do not match" >&2
+        exit 1
+    fi
+    chown root:root "$tls_dir" "$tls_dir/vsftpd.crt" "$tls_dir/vsftpd.key"
+    chmod 600 "$tls_dir/vsftpd.key"
+    # vsftpd only loads configuration owned by its startup user (root).
+    chown root:root configs/vsftpd/vsftpd.conf
+}
+
 deploy() {
     echo "Deploying containers..."
     docker compose pull
@@ -123,6 +146,7 @@ main() {
     generate_secrets
     create_env
     setup_directories
+    setup_ftp_tls
     deploy
     verify
 }

@@ -246,9 +246,6 @@ FTP_USER=${FTP_USER}
 FTP_PASS=${FTP_PASS}
 FTP_PASSIVE_MIN=${FTP_PASSIVE_MIN:-30000}
 FTP_PASSIVE_MAX=${FTP_PASSIVE_MAX:-30010}
-FTP_MAX_CLIENTS=20
-FTP_MAX_PER_IP=5
-FTP_RATE_LIMIT=102400
 FTP_MEM_LIMIT=${FTP_MEM_LIMIT}
 FTP_MEM_RESERVE=${FTP_MEM_RESERVE}
 FTP_CPU_LIMIT=${FTP_CPU_LIMIT}
@@ -268,10 +265,34 @@ setup_directories() {
     mkdir -p "$PROJECT_ROOT/data"/{db-data,db-config,unifi-config,shared-storage,ftp-logs}
     
     # Set ownership to non-root for container security
-    chown -R 1000:1000 "$PROJECT_ROOT/data"
-    chmod -R 750 "$PROJECT_ROOT/data"
+    # Keep the FTPS private key outside these application-owned directories.
+    chown -R 1000:1000 "$PROJECT_ROOT/data"/{db-data,db-config,unifi-config,shared-storage,ftp-logs}
+    chmod -R 750 "$PROJECT_ROOT/data"/{db-data,db-config,unifi-config,shared-storage,ftp-logs}
     
     log_success "Directory structure created with secure permissions"
+}
+
+# Create a persistent certificate for explicit FTPS. Existing certificates are kept.
+setup_ftp_tls() {
+    local tls_dir="$PROJECT_ROOT/data/ftp-tls"
+    install -d -m 700 "$tls_dir"
+    if [[ ! -e "$tls_dir/vsftpd.crt" && ! -e "$tls_dir/vsftpd.key" ]]; then
+        (umask 077; openssl req -x509 -nodes -newkey rsa:3072 -days 365 \
+            -keyout "$tls_dir/vsftpd.key" -out "$tls_dir/vsftpd.crt" \
+            -subj "/CN=${HOST_IP}" -addext "subjectAltName=IP:${HOST_IP}")
+    fi
+    # Fail before deployment if either file is missing or invalid.
+    openssl x509 -in "$tls_dir/vsftpd.crt" -noout -checkend 0
+    openssl pkey -in "$tls_dir/vsftpd.key" -noout -check
+    if ! cmp -s <(openssl x509 -in "$tls_dir/vsftpd.crt" -pubkey -noout) \
+                <(openssl pkey -in "$tls_dir/vsftpd.key" -pubout); then
+        echo "Error: FTPS certificate and private key do not match" >&2
+        exit 1
+    fi
+    chown root:root "$tls_dir" "$tls_dir/vsftpd.crt" "$tls_dir/vsftpd.key"
+    chmod 600 "$tls_dir/vsftpd.key"
+    # vsftpd only loads configuration owned by its startup user (root).
+    chown root:root "$PROJECT_ROOT/configs/vsftpd/vsftpd.conf"
 }
 
 #-------------------------------------------------------------------------------
@@ -360,6 +381,7 @@ main() {
     generate_credentials
     create_env_file
     setup_directories
+    setup_ftp_tls
     deploy_services
     display_info
 }

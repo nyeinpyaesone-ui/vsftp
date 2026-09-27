@@ -142,8 +142,9 @@ func main() {
 		state.mu.Lock()
 		defer state.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"%s","services":%q,"logs":%q,"isDeployed":%t}`, 
-			state.Status, state.Services, state.Logs, state.IsDeployed)
+		if err := json.NewEncoder(w).Encode(state); err != nil {
+			log.Printf("Failed to encode state response: %v", err)
+		}
 	}).Methods("GET")
 
 	// API: Deploy All

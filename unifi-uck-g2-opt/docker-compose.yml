@@ -67,7 +67,7 @@ services:
       size: "3G"
 
   vsftpd:
-    image: fauria/vsftpd:latest
+    image: delfer/alpine-ftp-server@sha256:60bb774d8408d9d4d5c74d05d1c086a34ce192c6c1a142ffac268cac0dbc6fac
     platform: linux/arm64
     container_name: unifi-ftp
     restart: unless-stopped
@@ -78,14 +78,16 @@ services:
       - "20000-20010:20000-20010"
     volumes:
       - ./data/shared-storage:/home/unifi_backup:rw
-      - ./configs/vsftpd/vsftpd.conf:/etc/vsftpd.conf:ro
+      - ./configs/vsftpd/vsftpd.conf:/etc/vsftpd/vsftpd.conf:ro
+      - ./data/ftp-tls:/etc/vsftpd/tls:ro
       - tmp-ftp:/var/log/vsftpd:rw
     environment:
-      - FTP_USER_1=unifi_backup
-      - FTP_PASS_1=${FTP_PASS}
-      - PASV_ADDRESS=${SERVER_IP}
-      - PASV_MIN_PORT=20000
-      - PASV_MAX_PORT=20010
+      - USERS=unifi_backup|${FTP_PASS:?FTP_PASS is required}|/home/unifi_backup|1000|1000
+      - ADDRESS=${SERVER_IP}
+      - MIN_PORT=20000
+      - MAX_PORT=20010
+      - TLS_CERT=/etc/vsftpd/tls/vsftpd.crt
+      - TLS_KEY=/etc/vsftpd/tls/vsftpd.key
     mem_limit: 64m
     mem_reservation: 48m
     cpus: 0.25
