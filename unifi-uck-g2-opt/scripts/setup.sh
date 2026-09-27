@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 
+# Exit with status 1 if the script is not running as root.
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         echo "Error: Root privileges required"
@@ -8,6 +9,7 @@ check_root() {
     fi
 }
 
+# Require the Docker CLI and a reachable daemon; exit with status 1 on failure.
 check_docker() {
     if ! command -v docker &> /dev/null; then
         echo "Error: Docker not installed"
@@ -19,6 +21,8 @@ check_docker() {
     fi
 }
 
+# Record and print RAM, CPU count, and free disk space for the current directory.
+# Exit with status 1 if RAM is below 1 GB or free disk space is below 5 GB.
 detect_hardware() {
     TOTAL_RAM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
     TOTAL_RAM_GB=$((TOTAL_RAM_KB / 1024 / 1024))
@@ -37,6 +41,7 @@ detect_hardware() {
     echo "Hardware: ${TOTAL_RAM_GB}GB RAM, ${CPU_CORES} Cores, ${DISK_AVAIL}KB Free"
 }
 
+# Set SERVER_IP from the route to 1.1.1.1, falling back to hostname IP or loopback.
 detect_ip() {
     SERVER_IP=$(ip route get 1.1.1.1 | awk '{print $7}' | head -1)
     if [ -z "$SERVER_IP" ]; then
@@ -48,6 +53,8 @@ detect_ip() {
     echo "Server IP: ${SERVER_IP}"
 }
 
+# Generate and export database and FTP passwords, overwriting their files in
+# .secrets relative to the current directory and setting file permissions to 600.
 generate_secrets() {
     DB_ROOT_PASS=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 32)
     DB_USER_PASS=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 32)
@@ -62,6 +69,8 @@ generate_secrets() {
     export DB_ROOT_PASS DB_USER_PASS FTP_PASS
 }
 
+# Write the detected IP, timezone, and generated credentials to .env in the
+# current directory, then restrict its permissions to 600.
 create_env() {
     TIMEZONE=$(cat /etc/timezone 2>/dev/null || echo "UTC")
     
@@ -77,6 +86,8 @@ EOF
     chmod 600 .env
 }
 
+# Create data directories relative to the current directory and assign UniFi
+# configuration and shared storage ownership to UID and GID 1000.
 setup_directories() {
     mkdir -p data/{db-data,unifi-config,shared-storage}
     chown -R 1000:1000 data/unifi-config
@@ -106,6 +117,7 @@ setup_ftp_tls() {
     chown root:root configs/vsftpd/vsftpd.conf
 }
 
+# Pull and start the current Compose project, then wait 15 seconds for startup.
 deploy() {
     echo "Deploying containers..."
     docker compose pull
@@ -114,6 +126,8 @@ deploy() {
     sleep 15
 }
 
+# Require the controller and FTP containers to appear Up in Compose status,
+# exiting with status 1 otherwise; print access details and the FTP password.
 verify() {
     if docker compose ps | grep -q "unifi-controller.*Up"; then
         echo "✓ UniFi Controller running"
@@ -138,6 +152,8 @@ verify() {
     echo "==========================="
 }
 
+# Validate prerequisites, generate configuration and storage, then deploy and
+# verify the Cloud Key stack using the current working directory.
 main() {
     check_root
     check_docker

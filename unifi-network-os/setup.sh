@@ -20,8 +20,11 @@ readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
 readonly NC='\033[0m' # No Color
 
+# Print the first argument as a colored informational message to stdout.
 log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+# Print the first argument as a colored warning message to stdout.
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+# Print the first argument as a colored error to stdout and exit with status 1.
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 # --- 1. Hardware Detection ---

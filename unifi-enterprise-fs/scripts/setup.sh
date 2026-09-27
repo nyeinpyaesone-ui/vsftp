@@ -21,9 +21,13 @@ ENV_FILE="$PROJECT_ROOT/.env"
 #-------------------------------------------------------------------------------
 # Logging Functions
 #-------------------------------------------------------------------------------
+# Print the first argument as a colored informational message to stdout.
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+# Print the first argument as a colored success message to stdout.
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+# Print the first argument as a colored warning message to stdout.
 log_warn() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+# Print the first argument as a colored error to stdout without exiting.
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 #-------------------------------------------------------------------------------

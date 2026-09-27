@@ -18,9 +18,13 @@ readonly LOG_FILE="/var/log/${APP_NAME}/startup.log"
 
 # --- Colors & Logging ---
 RED='\033[0;31m'; GREEN='\033[0;32m'; BLUE='\033[0;34m'; YELLOW='\033[1;33m'; NC='\033[0m'
+# Print all arguments as a colored informational message to stdout.
 log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
+# Print all arguments as a colored success message to stdout.
 log_success() { echo -e "${GREEN}[OK]${NC} $*"; }
+# Print all arguments as a colored warning message to stdout.
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+# Print all arguments as a colored error to stderr and exit with status 1.
 log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
 # --- 1. System Detection & Dependency Installation ---

@@ -59,6 +59,8 @@ var (
 	stateMutex sync.RWMutex
 )
 
+// main starts system monitoring and the HTTP API and dashboard, then shuts down
+// the server when SIGINT or SIGTERM is received.
 func main() {
 	// Initialize
 	addLog("info", "UniFi UCP Engine starting...")
@@ -120,6 +122,7 @@ func main() {
 	addLog("info", "Server stopped gracefully")
 }
 
+// getStateHandler writes the shared application state as JSON under a read lock.
 func getStateHandler(w http.ResponseWriter, r *http.Request) {
 	stateMutex.RLock()
 	defer stateMutex.RUnlock()
@@ -128,6 +131,7 @@ func getStateHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(state)
 }
 
+// getLogsHandler writes the retained log entries as a JSON logs object.
 func getLogsHandler(w http.ResponseWriter, r *http.Request) {
 	stateMutex.RLock()
 	defer stateMutex.RUnlock()
@@ -136,6 +140,8 @@ func getLogsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string][]LogEntry{"logs": state.Logs})
 }
 
+// deployHandler validates the JSON request and starts a simulated deployment in
+// the background, returning an initiation response before the simulation finishes.
 func deployHandler(w http.ResponseWriter, r *http.Request) {
 	// Validate Content-Type header
 	contentType := r.Header.Get("Content-Type")
@@ -194,6 +200,8 @@ func deployHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// migrateHandler starts a simulated migration in the background and returns an
+// initiation response. Completion clears the migration flag in shared state.
 func migrateHandler(w http.ResponseWriter, r *http.Request) {
 	addLog("warn", "Migration process initiated...")
 	
@@ -233,6 +241,8 @@ func migrateHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// restartServiceHandler simulates restarting the service named in the route by
+// updating shared state asynchronously; it does not restart a system process.
 func restartServiceHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	name := vars["name"]
@@ -271,6 +281,8 @@ func restartServiceHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// addLog appends a timestamped entry under the state lock, retaining the newest
+// 100 entries.
 func addLog(level, message string) {
 	stateMutex.Lock()
 	defer stateMutex.Unlock()
@@ -289,6 +301,8 @@ func addLog(level, message string) {
 	}
 }
 
+// monitorSystem simulates service status updates every five seconds while the
+// application is marked running. It runs until the process exits.
 func monitorSystem() {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
